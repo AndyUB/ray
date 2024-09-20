@@ -1,3 +1,4 @@
+import weakref
 import asyncio
 from collections import defaultdict, deque
 from dataclasses import dataclass, asdict
@@ -8,6 +9,7 @@ import time
 import uuid
 import traceback
 
+import ray.exceptions
 from ray.experimental.channel.cached_channel import CachedChannel
 from ray.experimental.channel.gpu_communicator import GPUCommunicator
 import ray
@@ -51,6 +53,21 @@ from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 
 logger = logging.getLogger(__name__)
+
+# Keep tracking of every compiled dag created during the lifetime of
+# this process. It tracks them as weakref meaning when the compiled dag
+# is GC'ed, it is automatically removed from here. It is used to teardown
+# compiled dags at interpret shutdown time.
+_compiled_dag_queue = weakref.WeakValueDictionary()
+
+
+# Relying on __del__ doesn't work well upon shutdown because
+# the destructor order is not guaranteed. We call this function
+# upon `ray.worker.shutdown` which is registered to atexit handler
+# so that teardown is properly called before objects are destructed.
+def shutdown_compiled_dag_node():
+    for _, compiled_dag in _compiled_dag_queue.items():
+        compiled_dag.teardown()
 
 
 @DeveloperAPI
@@ -835,6 +852,7 @@ class CompiledDAG:
 
                 # Collect actors for NCCL P2P methods.
                 if dag_node.type_hint.requires_nccl():
+                    # Add all writers to the NCCL group.
                     nccl_actors.add(actor_handle)
                     custom_nccl_group = dag_node.type_hint.get_custom_nccl_group()
                     mixed_nccl_group_error_message = (
@@ -1749,7 +1767,9 @@ class CompiledDAG:
         return not topological_order_exists
 
     def _monitor_failures(self):
-        outer = self
+        import weakref
+
+        outer = weakref.proxy(self)
 
         class Monitor(threading.Thread):
             def __init__(self):
@@ -1758,6 +1778,8 @@ class CompiledDAG:
                 # Lock to make sure that we only perform teardown for this DAG
                 # once.
                 self.in_teardown_lock = threading.Lock()
+                self.name = "MonitorThread"
+                self._teardown_done = False
 
             def wait_teardown(self):
                 for actor, ref in outer.worker_task_refs.items():
@@ -1787,6 +1809,9 @@ class CompiledDAG:
             def teardown(self, wait: bool):
                 do_teardown = False
                 with self.in_teardown_lock:
+                    if self._teardown_done:
+                        return
+
                     if not self.in_teardown:
                         do_teardown = True
                         self.in_teardown = True
@@ -1810,9 +1835,11 @@ class CompiledDAG:
                 ]
                 for cancel_ref in cancel_refs:
                     try:
-                        # TODO(swang): Suppress exceptions from actors trying to
-                        # read closed channels when DAG is being torn down.
                         ray.get(cancel_ref, timeout=30)
+                    except ray.exceptions.RayChannelError:
+                        # Channel error happens when a channel is closed
+                        # or timed out. In this case, do not log.
+                        pass
                     except Exception:
                         logger.exception("Error cancelling worker task")
                         pass
@@ -1824,6 +1851,9 @@ class CompiledDAG:
                     logger.info("Waiting for worker tasks to exit")
                     self.wait_teardown()
                     logger.info("Teardown complete")
+
+                with self.in_teardown_lock:
+                    self._teardown_done = True
 
             def run(self):
                 try:
@@ -2113,10 +2143,7 @@ class CompiledDAG:
         monitor = getattr(self, "_monitor", None)
         if monitor is not None:
             # Teardown asynchronously.
-            # NOTE(swang): Somehow, this can get called after the CoreWorker
-            # has already been destructed, so it is not safe to block in
-            # ray.get.
-            monitor.teardown(wait=False)
+            monitor.teardown(wait=True)
 
 
 @DeveloperAPI
@@ -2145,4 +2172,6 @@ def build_compiled_dag_from_ray_dag(
     root = dag._find_root()
     root.traverse_and_apply(_build_compiled_dag)
     compiled_dag._get_or_compile()
+    global _compiled_dag_queue
+    _compiled_dag_queue[compiled_dag.get_id()] = compiled_dag
     return compiled_dag
