@@ -1002,6 +1002,8 @@ class CompiledDAG:
                         dag_node.type_hint.set_nccl_group_id(self._nccl_group_id)
                     actors = frozenset(custom_group_actors)
                     actors_to_nccl_group_id[actors] = self._nccl_group_id
+                    self._nccl_group_ids.append(self._nccl_group_id)
+                    custom_nccl_group_to_id[custom_nccl_group] = self._nccl_group_id
             else:
                 nccl_group_id = _init_nccl_group(
                     custom_nccl_group.get_actor_handles(), custom_nccl_group
@@ -1010,6 +1012,8 @@ class CompiledDAG:
                     dag_node.type_hint.set_nccl_group_id(nccl_group_id)
                 actors = frozenset(custom_nccl_group.get_actor_handles())
                 actors_to_nccl_group_id[actors] = nccl_group_id
+                self._nccl_group_ids.append(nccl_group_id)
+                custom_nccl_group_to_id[custom_nccl_group] = nccl_group_id
 
         # If a custom NCCL group is specified for collective actors, initialize and
         # cache the NCCL group ID.

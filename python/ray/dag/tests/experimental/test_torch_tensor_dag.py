@@ -2135,10 +2135,9 @@ def test_torch_tensor_custom_comm_init_teardown(ray_start_regular):
     assert len(nccl_group_ids) == 1
     collective_nccl_group_id = list(nccl_group_ids)[0]
     assert collective_nccl_group_id == nccl_group_id
-    # The NCCL group is also used for P2P send/recv.
-    p2p_nccl_group_id = compiled_dag._nccl_group_id
-    assert p2p_nccl_group_id
-    assert p2p_nccl_group_id == nccl_group_id
+    # No custom NCCL group is provided in `dag.experimental_compile`.
+    # No default NCCL group is created since `transport=comm`.
+    assert compiled_dag._nccl_group_id is None
     # Sanity check: The NCCL group has correct actors.
     ctx = ChannelContext.get_current()
     nccl_group = ctx.nccl_groups[nccl_group_id]
@@ -2191,8 +2190,15 @@ def test_torch_tensor_custom_comm_init_teardown(ray_start_regular):
     for collective_nccl_group_id in nccl_group_ids:
         assert collective_nccl_group_id in compiled_dag._nccl_group_ids
     # 1 NCCL group is used for P2P send/recv.
-    p2p_nccl_group_id = compiled_dag._nccl_group_id
-    assert p2p_nccl_group_id
+    p2p_nccl_group = allreduce2[1].type_hint.get_custom_nccl_group()
+    assert p2p_nccl_group
+    p2p_nccl_group_ids = [
+        nccl_group_id
+        for nccl_group_id in compiled_dag._nccl_group_ids
+        if nccl_group_id not in nccl_group_ids
+    ]
+    assert len(p2p_nccl_group_ids) == 1
+    p2p_nccl_group_id = p2p_nccl_group_ids[0]
     assert p2p_nccl_group_id in compiled_dag._nccl_group_ids
     # Sanity check: The NCCL groups have correct actors.
     ctx = ChannelContext.get_current()
