@@ -690,6 +690,9 @@ class CompiledDAG:
         # Uniquely identifies the NCCL communicator that will be used within
         # this DAG, if any.
         self._nccl_group_id: Optional[str] = None
+        # Identifies the set of NCCL communicators used within this DAG,
+        # including both collective and P2P communicators.
+        self._nccl_group_ids: List[str] = []
         # The index of the current execution. It is incremented each time
         # the DAG is executed.
         self._execution_index: int = 0
@@ -752,7 +755,7 @@ class CompiledDAG:
             InputNode,
             MultiOutputNode,
         )
-        from ray.dag.collective_node import CollectiveGroup
+        from ray.dag.collective_node import _CollectiveGroup
 
         self.input_task_idx, self.output_task_idx = None, None
         self.actor_task_count.clear()
@@ -762,7 +765,7 @@ class CompiledDAG:
         custom_nccl_group_to_dag_nodes: Dict[
             GPUCommunicator, Set[DAGNode]
         ] = defaultdict(set)
-        nccl_collective_groups: Set[CollectiveGroup] = set()
+        nccl_collective_groups: Set[_CollectiveGroup] = set()
 
         # Find the input node to the DAG.
         for idx, task in self.idx_to_task.items():
@@ -981,6 +984,8 @@ class CompiledDAG:
         # Initialize a NCCL group for each set of actors. A set of actors can be
         # calling P2P send/recv or collective methods.
         actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
+        # Avoid initializing the same custom NCCL group multiple times.
+        custom_nccl_group_to_id: Dict[GPUCommunicator, str] = {}
 
         for custom_nccl_group, dag_nodes in custom_nccl_group_to_dag_nodes.items():
             if custom_nccl_group == self._custom_nccl_group:
@@ -1010,11 +1015,18 @@ class CompiledDAG:
         # cache the NCCL group ID.
         for collective_group in nccl_collective_groups:
             type_hint = collective_group.type_hint
-            if type_hint.get_custom_nccl_group():
-                nccl_group_id = collective_group.init_nccl_group()
-                actors = frozenset(collective_group.actor_handles)
-                if actors not in actors_to_nccl_group_id:
-                    actors_to_nccl_group_id[actors] = nccl_group_id
+            custom_nccl_group = type_hint.get_custom_nccl_group()
+            if custom_nccl_group:
+                if custom_nccl_group not in custom_nccl_group_to_id:
+                    nccl_group_id = collective_group.init_nccl_group()
+                    self._nccl_group_ids.append(nccl_group_id)
+                    actors = frozenset(collective_group.actor_handles)
+                    if actors not in actors_to_nccl_group_id:
+                        actors_to_nccl_group_id[actors] = nccl_group_id
+                    custom_nccl_group_to_id[custom_nccl_group] = nccl_group_id
+                else:
+                    nccl_group_id = custom_nccl_group_to_id[custom_nccl_group]
+                    type_hint.set_nccl_group_id(nccl_group_id)
 
         # If a NCCL group for P2P actors is not initialized, initialize and cache
         # the NCCL group ID.
@@ -1024,9 +1036,11 @@ class CompiledDAG:
             if actors in actors_to_nccl_group_id:
                 self._nccl_group_id = actors_to_nccl_group_id[actors]
             else:
+                assert self._custom_nccl_group is None
                 self._nccl_group_id = _init_nccl_group(
                     nccl_actors, self._custom_nccl_group
                 )
+                self._nccl_group_ids.append(self._nccl_group_id)
                 actors_to_nccl_group_id[actors] = self._nccl_group_id
             dag_nodes = custom_nccl_group_to_dag_nodes[None]
             for dag_node in dag_nodes:
@@ -1037,12 +1051,14 @@ class CompiledDAG:
         for collective_group in nccl_collective_groups:
             type_hint = collective_group.type_hint
             if type_hint.nccl_group_id is None:
+                assert type_hint.get_custom_nccl_group() is None
                 actors = frozenset(collective_group.actor_handles)
                 if actors in actors_to_nccl_group_id:
                     nccl_group_id = actors_to_nccl_group_id[actors]
                     type_hint.set_nccl_group_id(nccl_group_id)
                 else:
                     nccl_group_id = collective_group.init_nccl_group()
+                    self._nccl_group_ids.append(nccl_group_id)
                     actors_to_nccl_group_id[actors] = nccl_group_id
 
         if direct_input:
@@ -1847,8 +1863,8 @@ class CompiledDAG:
                         logger.exception("Error cancelling worker task")
                         pass
 
-                if outer._nccl_group_id is not None:
-                    _destroy_nccl_group(outer._nccl_group_id)
+                for nccl_group_id in outer._nccl_group_ids:
+                    _destroy_nccl_group(nccl_group_id)
 
                 if wait:
                     logger.info("Waiting for worker tasks to exit")

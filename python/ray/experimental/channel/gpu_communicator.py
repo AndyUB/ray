@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 import ray
+from ray.experimental.util.types import ReduceOp
 from ray.util.annotations import DeveloperAPI
-from ray.util.collective.nccl_types import ReduceOp
 
 if TYPE_CHECKING:
     import torch
@@ -130,3 +130,6 @@ class GPUCommunicator(ABC):
         done here. Implement as a noop is nothing is needed.
         """
         raise NotImplementedError
+
+    def __deepcopy__(self, _) -> "GPUCommunicator":
+        return self
