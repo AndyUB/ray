@@ -260,6 +260,8 @@ class ClassMethodNode(DAGNode):
         return method_body
 
     def _get_actor_handle(self) -> Optional["ray.actor.ActorHandle"]:
+        if self.is_class_method_output:
+            return self.class_method_call._get_actor_handle()
         if not isinstance(self._parent_class_node, ray.actor.ActorHandle):
             return None
         return self._parent_class_node

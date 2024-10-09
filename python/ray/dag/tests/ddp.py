@@ -4,6 +4,8 @@ import sys
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Type, Optional
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
 
 import ray
@@ -73,6 +75,7 @@ class DDPModel(ABC):
 
 @ray.remote
 class DummyDDPModel(DDPModel):
+
     def __init__(self, num_layers: int, layer_size: int):
         super().__init__(num_layers)
         self._layer_size = layer_size
@@ -103,6 +106,7 @@ class DummyDDPModel(DDPModel):
         y = y.to(self._device)
         return (pred - y, None)
 
+    # @ray.method(num_returns=2)
     def backward(
         self, layer_idx: int, grad: Tuple[torch.Tensor, Optional[torch.Tensor]]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -206,6 +210,79 @@ class NNDDPModel(DDPModel):
         return updates
 
 
+class Model(torch.nn.Module):
+
+    def __init__(self, layer_size: int, num_layers: int):
+        super(Model, self).__init__()
+
+        self.layers = []
+        for _ in range(num_layers):
+            self.layers.append(torch.nn.Linear(layer_size, layer_size))
+            self.layers.append(torch.nn.ReLU())
+        self.inputs = []
+        self.activations = []
+        self._lr = 1e-3
+        self._optimizer = optim.SGD(self._model.parameters(), lr=self._lr)
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+    # def get_layer(self, layer_idx: int) -> List[torch.nn.Module]:
+    #     return [self.layers[2 * layer_idx], self.layers[2 * layer_idx + 1]]
+
+    def forward_layer(self, x, layer_idx):
+        self.inputs.append(x)
+        linear_layer = self.layers[2 * layer_idx]
+        y = linear_layer(x)
+        relu_activation = self.layers[2 * layer_idx + 1]
+        z = relu_activation(y)
+        self.activations.append(z)
+        return z
+
+    def backward_layer(self, grad, layer_idx):
+        x = self.inputs[layer_idx]
+        z = self.activations[layer_idx]
+
+    def update_layer(self, grad, layer_idx):
+        pass
+
+
+@ray.remote
+class TorchDDPModel(DDPModel):
+    def __init__(self, num_layers: int, layer_size: int):
+        super().__init__(num_layers)
+
+        self._device = torch_utils.get_devices()[0]
+        self._model = Model(layer_size, num_layers)
+        self._model = self._model.to(self._device)
+        self._criterion = nn.MSELoss()
+
+    def start_train(self, x: torch.Tensor) -> torch.Tensor:
+        return x.to(self._device)
+
+    def forward(self, layer_idx: int, input: torch.Tensor) -> torch.Tensor:
+        return self._model.forward_layer(input, layer_idx)
+
+    def loss(self, pred: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, None]:
+        y = y.to(self._device)
+        loss = self._criterion(pred, y)
+        return loss, None
+
+    def backward(
+        self, layer_idx: int, grad: Tuple[torch.Tensor, Optional[torch.Tensor]]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        bp_grad, _ = grad
+        return self._model.backward_layer(bp_grad, layer_idx)
+
+    def update(self, layer_idx: int, grad: torch.Tensor) -> torch.Tensor:
+        return self._model.update_layer(grad, layer_idx)
+
+    def finish_train(self, *updates: torch.Tensor) -> List[torch.Tensor]:
+        return self._model._weights
+
+
 def run_experiment(model: Type[DDPModel]) -> None:
     actor_cls = model.options(num_gpus=1)
     num_layers = 2
@@ -235,7 +312,10 @@ def run_experiment(model: Type[DDPModel]) -> None:
         output = []
         grads = losses
         for j in reversed(range(num_layers)):
+            # grads_to_reduce = []
             for i, actor in enumerate(actors):
+                # grads[i], grad_to_reduce = actor.backward.bind(j, grads[i])
+                # grads_to_reduce.append(grad_to_reduce)
                 grads[i] = actor.backward.bind(j, grads[i])
             reduced_grads = allreduce.bind(
                 [
@@ -243,6 +323,7 @@ def run_experiment(model: Type[DDPModel]) -> None:
                     for i, actor in enumerate(actors)
                 ]
             )
+            # reduced_grads = allreduce.bind(grads_to_reduce)
             updates = [
                 actor.update.bind(j, reduced_grad)
                 for actor, reduced_grad in zip(actors, reduced_grads)
