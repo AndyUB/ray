@@ -212,17 +212,20 @@ class NNDDPModel(DDPModel):
 
 class Model(torch.nn.Module):
 
-    def __init__(self, layer_size: int, num_layers: int):
+    def __init__(self, layer_size: int, num_layers: int, device, dtype):
         super(Model, self).__init__()
 
         self.layers = []
         for _ in range(num_layers):
-            self.layers.append(torch.nn.Linear(layer_size, layer_size))
+            self.layers.append(
+                torch.nn.Linear(layer_size, layer_size, device=device, dtype=dtype)
+            )
             self.layers.append(torch.nn.ReLU())
         self.inputs = []
         self.activations = []
         self._lr = 1e-3
-        self._optimizer = optim.SGD(self._model.parameters(), lr=self._lr)
+        # self._optimizer = optim.SGD(self._model.parameters(), lr=self._lr)
+        self.it = 0
 
     def forward(self, x):
         for layer in self.layers:
@@ -235,18 +238,43 @@ class Model(torch.nn.Module):
     def forward_layer(self, x, layer_idx):
         self.inputs.append(x)
         linear_layer = self.layers[2 * layer_idx]
+        print(f"W: {linear_layer.weight}")
+        print(f"b: {linear_layer.bias}")
+        print(f"x: {x}")
         y = linear_layer(x)
         relu_activation = self.layers[2 * layer_idx + 1]
         z = relu_activation(y)
         self.activations.append(z)
+        print(f"fw x grad fn: {x.grad_fn}")
+        print(f"fw y grad fn: {y.grad_fn}")
+        print(f"fw z grad fn: {z.grad_fn}")
+        print(f"fw W grad fn: {self.layers[2 * layer_idx].weight.grad_fn}")
         return z
 
-    def backward_layer(self, grad, layer_idx):
+    def backward_layer(self, grad: torch.Tensor, layer_idx):
         x = self.inputs[layer_idx]
-        z = self.activations[layer_idx]
+        # self.it += 1
+        # print(self.it)
+        print(f"grad: {grad}")
+        print(f"x: {x}")
+        # x = Variable(x, require_grad=True)
+        W = self.layers[2 * layer_idx].weight
+        print(f"W: {W}")
+        # print(W.requires_grad)
+        # print(x.requires_grad)
+        print(f"bw W grad fn: {W.grad_fn}")
+        print(f"bw x grad fn: {x.grad_fn}")
+        print(f"bw grad grad fn: {grad.grad_fn}")
+        grad.backward()
+        # grad.backward(gradient=grad, inputs=[x, W])
+        print(f"x.grad: {x.grad}")
+        print(f"W.grad: {W.grad}")
+        return x.grad, W.grad
 
     def update_layer(self, grad, layer_idx):
-        pass
+        with torch.no_grad():
+            self.layers[2 * layer_idx].weight -= self._lr * grad
+        return self.layers[2 * layer_idx].weight
 
 
 @ray.remote
@@ -260,27 +288,36 @@ class TorchDDPModel(DDPModel):
         self._criterion = nn.MSELoss()
 
     def start_train(self, x: torch.Tensor) -> torch.Tensor:
+        self._model.zero_grad()
         return x.to(self._device)
 
     def forward(self, layer_idx: int, input: torch.Tensor) -> torch.Tensor:
+        input = input.to(self._device)
         return self._model.forward_layer(input, layer_idx)
 
     def loss(self, pred: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, None]:
         y = y.to(self._device)
+        pred = pred.to(self._device)
+        print(f"pred grad fn: {pred.grad_fn}")
         loss = self._criterion(pred, y)
+        print(f"loss grad fn: {loss.grad_fn}")
         return loss, None
 
     def backward(
         self, layer_idx: int, grad: Tuple[torch.Tensor, Optional[torch.Tensor]]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         bp_grad, _ = grad
+        print(f"layer {layer_idx} grad fn: {bp_grad.grad_fn}")
+        bp_grad = bp_grad.to(self._device)
+        print(f"layer {layer_idx} after to: {bp_grad.grad_fn}")
         return self._model.backward_layer(bp_grad, layer_idx)
 
     def update(self, layer_idx: int, grad: torch.Tensor) -> torch.Tensor:
+        grad = grad.to(self._device)
         return self._model.update_layer(grad, layer_idx)
 
     def finish_train(self, *updates: torch.Tensor) -> List[torch.Tensor]:
-        return self._model._weights
+        return updates
 
 
 def run_experiment(model: Type[DDPModel]) -> None:
@@ -292,11 +329,13 @@ def run_experiment(model: Type[DDPModel]) -> None:
 
     shape = (num_actors * layer_size, layer_size)
     dtype = torch.float16
-    X = torch.ones(shape, dtype=dtype) * 10
-    Y = torch.ones(shape, dtype=dtype) * 1000
+    X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
+    Y = torch.ones(shape, dtype=dtype) * 100
 
-    xs = torch.chunk(X, num_actors)
-    ys = torch.chunk(Y, num_actors)
+    xs = torch.tensor_split(X, num_actors)
+    ys = torch.tensor_split(Y, num_actors)
+    # print(xs)
+    # print(ys)
 
     with InputNode() as inp:
         losses = []
@@ -350,8 +389,9 @@ def main() -> None:
     if sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) < 2:
         return
 
-    run_experiment(DummyDDPModel)
-    run_experiment(NNDDPModel)
+    # run_experiment(DummyDDPModel)
+    # run_experiment(NNDDPModel)
+    run_experiment(TorchDDPModel)
 
 
 if __name__ == "__main__":
