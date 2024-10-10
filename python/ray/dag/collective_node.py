@@ -29,7 +29,7 @@ class _CollectiveGroup:
         self,
         input_nodes: List[DAGNode],
         op: _CollectiveOp,
-        transport: Union[str, GPUCommunicator] = TorchTensorType.NCCL,
+        transport: Optional[Union[str, GPUCommunicator]] = None,
     ):
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
@@ -40,20 +40,31 @@ class _CollectiveGroup:
         self._actor_handles: List["ray.actor.ActorHandle"] = []
         for input_node in self._input_nodes:
             actor_handle = input_node._get_actor_handle()
-            assert actor_handle is not None, "Expected a actor handle"
+            if actor_handle is None:
+                raise ValueError("Expected an actor handle from the input node")
             self._actor_handles.append(actor_handle)
         if len(set(self._actor_handles)) != len(self._actor_handles):
-            raise ValueError("Expected unique actor handles for a collective group")
+            invalid_input_nodes = [
+                input_node
+                for input_node in self._input_nodes
+                if self._actor_handles.count(input_node._get_actor_handle()) > 1
+            ]
+            raise ValueError(
+                "Expected unique actor handles for a collective group, but found "
+                f"duplicate actor handles from input nodes: {invalid_input_nodes}"
+            )
 
         self._op = op
-        assert isinstance(
-            self._op, ReduceOp
-        ), "Other collective ops are not implemented"
+        if not isinstance(self._op, ReduceOp):
+            raise NotImplementedError("Only ReduceOp is implemented")
+        if transport is None:
+            transport = TorchTensorType.NCCL
         self._type_hint = TorchTensorType(transport=transport, _direct_return=True)
         if isinstance(transport, GPUCommunicator):
-            assert set(transport.get_actor_handles()) == set(
-                self._actor_handles
-            ), "Expected actor handles to match the custom NCCL group"
+            if set(transport.get_actor_handles()) != set(self._actor_handles):
+                raise ValueError(
+                    "Expected actor handles to match the custom NCCL group"
+                )
 
     def __str__(self) -> str:
         return (
@@ -93,17 +104,18 @@ class _CollectiveGroup:
             raise ValueError("Expected a NCCL group")
         return nccl_group
 
-    def method(self, tensor: "torch.Tensor"):
+    def method(self, send_buf: "torch.Tensor"):
+        """
+        [TODO] Comments.
+        """
         import torch
 
-        assert isinstance(tensor, torch.Tensor), "Expected a torch tensor"
+        if not isinstance(send_buf, torch.Tensor):
+            raise ValueError("Expected a torch tensor")
         nccl_group = self.get_nccl_group()
-        assert isinstance(
-            self._op, ReduceOp
-        ), "Other collective ops are not yet implemented"
-        tensor_copy = tensor.clone()
-        nccl_group.allreduce(tensor_copy, self._op)
-        return tensor_copy
+        recv_buf = torch.empty_like(send_buf)
+        nccl_group.allreduce(send_buf, recv_buf, self._op)
+        return recv_buf
 
 
 @DeveloperAPI
@@ -134,17 +146,19 @@ class CollectiveOutputNode(DAGNode):
         )
 
         # Parse the input node.
-        assert (
+        if not (
             isinstance(method_args, tuple)
             and len(method_args) == 1
             and isinstance(method_args[0], DAGNode)
-        ), "Expected a single input node"
+        ):
+            raise ValueError("Expected a single input node")
         self._input_node = method_args[0]
         # Parse the collective group.
         self._collective_group: _CollectiveGroup = other_args_to_resolve.get(
             COLLECTIVE_GROUP_KEY, None
         )
-        assert self._collective_group is not None, "Expected a collective group"
+        if self._collective_group is None:
+            raise ValueError("Expected a collective group")
 
         # The actor creation task dependency is encoded as the first argument,
         # and the ordering dependency as the second, which ensures they are
@@ -163,7 +177,7 @@ class CollectiveOutputNode(DAGNode):
         new_options: Dict[str, Any],
         new_other_args_to_resolve: Dict[str, Any],
     ):
-        return _CollectiveGroup(
+        return CollectiveOutputNode(
             self._method_name,
             new_args,
             new_kwargs,
@@ -172,7 +186,9 @@ class CollectiveOutputNode(DAGNode):
         )
 
     def _execute_impl(self, *args, **kwargs):
-        raise NotImplementedError("CollectiveOutputNode is only supported for aDAG")
+        raise NotImplementedError(
+            "CollectiveOutputNode is only supported with dag.experimental_compile()"
+        )
 
     def __str__(self) -> str:
         return get_dag_node_str(self, f"{self._method_name}()")

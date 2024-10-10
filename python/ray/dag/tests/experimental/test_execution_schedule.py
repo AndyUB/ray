@@ -72,7 +72,7 @@ class TestSelectNextNodes:
         for dag_idx in dag_idxs:
             mock_graph[dag_idx][
                 _DAGNodeOperationType.COMPUTE
-            ].collective_group = collective_group
+            ].set_collective_group_idxs(collective_group)
 
     def test_two_candidates_on_same_actor(self, monkeypatch):
         """
