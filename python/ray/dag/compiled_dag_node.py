@@ -691,7 +691,7 @@ class CompiledDAG:
         # this DAG, if any.
         self._nccl_group_id: Optional[str] = None
         # Identifies the set of NCCL communicators used within this DAG,
-        # including both collective and P2P communicators.
+        # including both P2P and collective communicators.
         self._nccl_group_ids: List[str] = []
         # The index of the current execution. It is incremented each time
         # the DAG is executed.
