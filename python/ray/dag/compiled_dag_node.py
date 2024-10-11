@@ -994,7 +994,12 @@ class CompiledDAG:
                 if custom_nccl_group:
                     custom_group_actors = custom_nccl_group.get_actor_handles()
                     for nccl_actor in nccl_actors:
-                        assert nccl_actor in custom_group_actors
+                        if nccl_actor not in custom_group_actors:
+                            raise ValueError(
+                                "The custom NCCL group specified in "
+                                "`dag.experimental_compile` must contain all actors "
+                                "that participate in P2P NCCL send/recv."
+                            )
                     self._nccl_group_id = _init_nccl_group(
                         custom_group_actors, custom_nccl_group
                     )
