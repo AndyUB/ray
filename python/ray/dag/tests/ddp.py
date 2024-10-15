@@ -7,6 +7,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 import ray
 from ray.air._internal import torch_utils
@@ -81,7 +84,7 @@ class DummyDDPModel(DDPModel):
         self._weights = [
             torch.ones(
                 (layer_size, layer_size),
-                dtype=torch.float16,
+                dtype=torch.float32,
                 device=self._device,
             )
             * 100
@@ -95,7 +98,7 @@ class DummyDDPModel(DDPModel):
 
     def get_tensor(self, value: int) -> torch.Tensor:
         shape = (self._layer_size,)
-        dtype = torch.float16
+        dtype = torch.float32
         return torch.ones(shape, dtype=dtype, device=self._device) * value
 
     def forward(self, layer_idx: int, input: torch.Tensor) -> torch.Tensor:
@@ -129,7 +132,7 @@ class NNDDPModel(DDPModel):
         self._weights = [
             torch.ones(
                 (layer_size, layer_size),
-                dtype=torch.float16,
+                dtype=torch.float32,
                 device=self._device,
             )
             for _ in range(num_layers)
@@ -137,7 +140,7 @@ class NNDDPModel(DDPModel):
         self._biases = [
             torch.ones(
                 (layer_size, layer_size),
-                dtype=torch.float16,
+                dtype=torch.float32,
                 device=self._device,
             )
             for _ in range(num_layers)
@@ -175,7 +178,7 @@ class NNDDPModel(DDPModel):
         self, layer_idx: int, grad: Tuple[torch.Tensor, Optional[torch.Tensor]]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         def relu_grad(pre_activation: torch.Tensor) -> torch.Tensor:
-            return (pre_activation > 0).to(torch.float16)
+            return (pre_activation > 0).to(torch.float32)
 
         bp_grad, _ = grad
         W = self._weights[layer_idx]
@@ -223,10 +226,16 @@ class Model(torch.nn.Module):
                 )
             )
             self.layers.append(torch.nn.ReLU())
+        self.layers: nn.ModuleList = nn.ModuleList(self.layers)
         self.inputs: List[torch.Tensor] = []
         self.outputs: List[torch.Tensor] = []
         self.activations: List[torch.Tensor] = []
-        self._lr: float = 1e-3
+        self.lr: float = 1e-3
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for layer in self.layers:
+            x = layer(x)
+        return x
 
     def forward_layer(self, x: torch.Tensor, layer_idx: int) -> torch.Tensor:
         self.inputs.append(x)
@@ -252,7 +261,7 @@ class Model(torch.nn.Module):
     def update_layer(self, grad: torch.Tensor, layer_idx: int) -> torch.Tensor:
         layer: torch.nn.Linear = self.layers[2 * layer_idx]
         with torch.no_grad():
-            layer.weight -= self._lr * grad
+            layer.weight -= self.lr * grad
         return layer.weight
 
 
@@ -261,7 +270,7 @@ class TorchDDPModel(DDPModel):
     def __init__(self, num_layers: int, layer_size: int):
         super().__init__(num_layers)
 
-        self._model: Model = Model(layer_size, num_layers, self._device, torch.float16)
+        self._model: Model = Model(layer_size, num_layers, self._device, torch.float32)
         self._criterion = nn.MSELoss()
 
     def start_train(self, x: torch.Tensor) -> torch.Tensor:
@@ -302,7 +311,7 @@ def run_experiment(model: Type[DDPModel]) -> None:
     actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
 
     shape = (num_actors * layer_size, layer_size)
-    dtype = torch.float16
+    dtype = torch.float32
     X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
     Y = torch.ones(shape, dtype=dtype) * 100
 
@@ -354,16 +363,110 @@ def run_experiment(model: Type[DDPModel]) -> None:
         ray.kill(actor)
 
 
+def check_torch_model_correctness() -> None:
+    layer_size = 10
+    num_actors = 2
+    shape = (num_actors * layer_size, layer_size)
+    dtype = torch.float32
+    X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
+    Y = torch.ones(shape, dtype=dtype) * 100
+
+    check_torch_model_correctness_layer()
+    check_torch_model_correctness_auto(X, Y)
+    check_torch_model_correctness_dist()
+
+
+def check_torch_model_correctness_layer() -> None:
+    pass
+
+
+def check_torch_model_correctness_auto(X: torch.Tensor, Y: torch.Tensor) -> None:
+    model = Model(10, 2, "cpu", torch.float32)
+    criterion = nn.MSELoss()
+    optimizer = optim.SGD(model.parameters(), lr=model.lr)
+
+    optimizer.zero_grad()
+    pred: torch.Tensor = model(X)
+    loss: torch.Tensor = criterion(pred, Y)
+    loss.backward()
+    optimizer.step()
+
+    for i in range(0, len(model.layers), 2):
+        layer: torch.nn.Linear = model.layers[i]
+        print(layer.weight)
+
+
+def setup(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+
+    # initialize the process group
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+
+
+def cleanup():
+    dist.destroy_process_group()
+
+
+def demo_basic(rank, world_size):
+    print(f"Running basic DDP example on rank {rank}.")
+    setup(rank, world_size)
+
+    # create model and move it to GPU with id rank
+    model = Model(10, 2, "cpu", torch.float32).to(rank)
+    ddp_model = DDP(model, device_ids=[rank])
+
+    loss_fn = nn.MSELoss()
+    optimizer = optim.SGD(ddp_model.parameters(), lr=model.lr)
+
+    optimizer.zero_grad()
+    layer_size = 10
+    num_actors = 2
+    shape = (num_actors * layer_size, layer_size)
+    dtype = torch.float32
+    x = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
+    y = torch.ones(shape, dtype=dtype) * 100
+    x = x.to(rank)
+    y = y.to(rank)
+    outputs = ddp_model(x)
+    labels = y
+    loss_fn(outputs, labels).backward()
+    optimizer.step()
+
+    for i in range(0, len(model.layers), 2):
+        layer: torch.nn.Linear = model.layers[i]
+        print(layer.weight)
+
+    cleanup()
+
+
+def run_demo(demo_fn, world_size):
+    mp.spawn(demo_fn, args=(world_size,), nprocs=world_size, join=True)
+
+
+def check_torch_model_correctness_dist():
+    n_gpus = torch.cuda.device_count()
+    assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
+    world_size = n_gpus
+    run_demo(demo_basic, world_size)
+
+
 def main() -> None:
     ray.init()
     if not USE_GPU:
+        print("No GPUs available")
         return
     if sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) < 2:
+        print("Needs at least 2 GPUs")
         return
 
     run_experiment(DummyDDPModel)
     run_experiment(NNDDPModel)
     run_experiment(TorchDDPModel)
+
+    ray.shutdown()
+
+    check_torch_model_correctness()
 
 
 if __name__ == "__main__":
