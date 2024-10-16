@@ -20,6 +20,19 @@ from ray.experimental.collective import allreduce
 logger = logging.getLogger(__name__)
 
 USE_GPU = bool(os.environ.get("RAY_PYTEST_USE_GPU", 0))
+SEED = 42
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+set_seed(SEED)
 
 
 class DDPModel(ABC):
@@ -216,6 +229,9 @@ class Model(torch.nn.Module):
     def __init__(
         self, layer_size: int, num_layers: int, device: torch.device, dtype: torch.dtype
     ):
+        torch.manual_seed(SEED)
+        torch.cuda.manual_seed_all(SEED)
+
         super(Model, self).__init__()
 
         self.layers: List[torch.nn.Module] = []
@@ -225,12 +241,17 @@ class Model(torch.nn.Module):
                     layer_size, layer_size, device=device, dtype=dtype, bias=False
                 )
             )
+            # print(self.layers[-1].weight)
             self.layers.append(torch.nn.ReLU())
         self.layers: nn.ModuleList = nn.ModuleList(self.layers)
         self.inputs: List[torch.Tensor] = []
         self.outputs: List[torch.Tensor] = []
         self.activations: List[torch.Tensor] = []
         self.lr: float = 1e-3
+        self.optimizers: List[optim.SGD] = [
+            optim.SGD(self.layers[2 * i].parameters(), lr=self.lr)
+            for i in range(num_layers)
+        ]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
@@ -253,15 +274,23 @@ class Model(torch.nn.Module):
         x: torch.Tensor = self.inputs[layer_idx]
         layer: torch.nn.Linear = self.layers[2 * layer_idx]
         W: torch.Tensor = layer.weight
+        optimizer = self.optimizers[layer_idx]
+        optimizer.zero_grad()
         z.backward(gradient=torch.ones_like(z), retain_graph=True, inputs=[W, x])
-        # print(f"x.grad: {x.grad}")
-        # print(f"W.grad: {W.grad}")
+        # print()
+        # print(f"x.grad: {x.grad * grad}")
+        # print(f"W.grad: {W.grad * grad}")
+        # print()
         return x.grad * grad, W.grad * grad
 
     def update_layer(self, grad: torch.Tensor, layer_idx: int) -> torch.Tensor:
         layer: torch.nn.Linear = self.layers[2 * layer_idx]
-        with torch.no_grad():
-            layer.weight -= self.lr * grad
+        [param for param in layer.parameters()][0].grad = grad
+        # print(f"update grad: {grad}")
+        optimizer = self.optimizers[layer_idx]
+        optimizer.step()
+        # with torch.no_grad():
+        #     layer.weight -= self.lr * grad
         return layer.weight
 
 
@@ -274,7 +303,7 @@ class TorchDDPModel(DDPModel):
         self._criterion = nn.MSELoss()
 
     def start_train(self, x: torch.Tensor) -> torch.Tensor:
-        self._model.zero_grad()
+        # self._model.zero_grad()
         return x.to(self._device)
 
     def forward(self, layer_idx: int, input: torch.Tensor) -> torch.Tensor:
@@ -311,12 +340,17 @@ def run_experiment(model: Type[DDPModel]) -> None:
     actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
 
     shape = (num_actors * layer_size, layer_size)
+    numel = shape[0] * shape[1]
     dtype = torch.float32
-    X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
-    Y = torch.ones(shape, dtype=dtype) * 100
+    # X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
+    # Y = torch.ones(shape, dtype=dtype) * 100
+    x = torch.arange(numel, dtype=dtype, requires_grad=True) * 0.1
+    x = x.reshape(shape)
+    y = torch.arange(numel, dtype=dtype) * 10
+    y = y.reshape(shape)
 
-    xs = torch.tensor_split(X, num_actors)
-    ys = torch.tensor_split(Y, num_actors)
+    xs = torch.tensor_split(x, num_actors)
+    ys = torch.tensor_split(y, num_actors)
 
     with InputNode() as inp:
         losses = []
@@ -353,9 +387,14 @@ def run_experiment(model: Type[DDPModel]) -> None:
         dag = MultiOutputNode(ends)
 
     compiled_dag = dag.experimental_compile()
-    ref = compiled_dag.execute(*xs, *ys)
-    result = ray.get(ref)
-    print(f"success: {result}")
+    it = 1
+    for _ in range(it):
+        ref = compiled_dag.execute(*xs, *ys)
+        result = ray.get(ref)
+        print(f"[ray]: {result}")
+        print()
+        print()
+        print()
 
     compiled_dag.teardown()
 
@@ -367,12 +406,18 @@ def check_torch_model_correctness() -> None:
     layer_size = 10
     num_actors = 2
     shape = (num_actors * layer_size, layer_size)
+    numel = shape[0] * shape[1]
     dtype = torch.float32
-    X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
-    Y = torch.ones(shape, dtype=dtype) * 100
+    # X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
+    # Y = torch.ones(shape, dtype=dtype) * 100
+    x = torch.arange(numel, dtype=dtype, requires_grad=True) * 0.1
+    x = x.reshape(shape)
+    y = torch.arange(numel, dtype=dtype) * 10
+    y = y.reshape(shape)
 
-    check_torch_model_correctness_layer()
-    check_torch_model_correctness_auto(X, Y)
+    # check_torch_model_correctness_layer()
+    # check_torch_model_correctness_auto(X, Y)
+    check_torch_model_correctness_auto(x, y)
     check_torch_model_correctness_dist()
 
 
@@ -381,19 +426,26 @@ def check_torch_model_correctness_layer() -> None:
 
 
 def check_torch_model_correctness_auto(X: torch.Tensor, Y: torch.Tensor) -> None:
-    model = Model(10, 2, "cpu", torch.float32)
+    device = "cuda:0"
+    X = X.to(device)
+    Y = Y.to(device)
+    model = Model(10, 2, device, torch.float32)
     criterion = nn.MSELoss()
     optimizer = optim.SGD(model.parameters(), lr=model.lr)
+    it = 1
 
-    optimizer.zero_grad()
-    pred: torch.Tensor = model(X)
-    loss: torch.Tensor = criterion(pred, Y)
-    loss.backward()
-    optimizer.step()
+    for _ in range(it):
+        optimizer.zero_grad()
+        pred: torch.Tensor = model(X)
+        loss: torch.Tensor = criterion(pred, Y)
+        loss.backward()
+        # for param in model.parameters():
+        #     print(f"W grad: {param.grad}")
+        optimizer.step()
 
     for i in range(0, len(model.layers), 2):
         layer: torch.nn.Linear = model.layers[i]
-        print(layer.weight)
+        print(f"[auto] layer {i}: {layer.weight}")
 
 
 def setup(rank, world_size):
@@ -413,7 +465,7 @@ def demo_basic(rank, world_size):
     setup(rank, world_size)
 
     # create model and move it to GPU with id rank
-    model = Model(10, 2, "cpu", torch.float32).to(rank)
+    model = Model(10, 2, f"cuda:{rank}", torch.float32).to(rank)
     ddp_model = DDP(model, device_ids=[rank])
 
     loss_fn = nn.MSELoss()
@@ -423,9 +475,18 @@ def demo_basic(rank, world_size):
     layer_size = 10
     num_actors = 2
     shape = (num_actors * layer_size, layer_size)
+    numel = shape[0] * shape[1]
     dtype = torch.float32
-    x = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
-    y = torch.ones(shape, dtype=dtype) * 100
+    # x = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
+    # y = torch.ones(shape, dtype=dtype) * 100
+    x = torch.arange(numel, dtype=dtype, requires_grad=True) * 0.1
+    x = x.reshape(shape)
+    y = torch.arange(numel, dtype=dtype) * 10
+    y = y.reshape(shape)
+    xs = torch.tensor_split(x, num_actors)
+    ys = torch.tensor_split(y, num_actors)
+    x = xs[rank]
+    y = ys[rank]
     x = x.to(rank)
     y = y.to(rank)
     outputs = ddp_model(x)
@@ -435,7 +496,7 @@ def demo_basic(rank, world_size):
 
     for i in range(0, len(model.layers), 2):
         layer: torch.nn.Linear = model.layers[i]
-        print(layer.weight)
+        print(f"[dist] layer {i}: {layer.weight}")
 
     cleanup()
 
@@ -452,6 +513,7 @@ def check_torch_model_correctness_dist():
 
 
 def main() -> None:
+    # dataloader = load_data()
     ray.init()
     if not USE_GPU:
         print("No GPUs available")
@@ -460,8 +522,8 @@ def main() -> None:
         print("Needs at least 2 GPUs")
         return
 
-    run_experiment(DummyDDPModel)
-    run_experiment(NNDDPModel)
+    # run_experiment(DummyDDPModel)
+    # run_experiment(NNDDPModel)
     run_experiment(TorchDDPModel)
 
     ray.shutdown()
@@ -471,3 +533,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# 0. cleanup
+# 1. baseline (identify performance overhead)
+# 2. multiple steps
