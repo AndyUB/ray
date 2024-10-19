@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Type, Optional
 import torch
@@ -19,19 +20,33 @@ from ray.experimental.collective import allreduce
 
 logger = logging.getLogger(__name__)
 
-USE_GPU = bool(os.environ.get("RAY_PYTEST_USE_GPU", 0))
-SEED = 42
+
+@dataclass
+class Config:
+    "Configuration for the demo model."
+    # Model config.
+    num_layers: int = 2
+    layer_size: int = 10  # The layer is a square.
+    # Training config.
+    dtype: torch.dtype = torch.float32
+    it: int = 1
+    lr: int = 1e-3
+    # Distributed config.
+    num_actors: int = 2
+
+
+CONFIG = Config()
 
 
 def set_seed(seed):
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed_all(seed)
 
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 
+SEED = 42
 set_seed(SEED)
 
 
@@ -241,13 +256,13 @@ class Model(torch.nn.Module):
                     layer_size, layer_size, device=device, dtype=dtype, bias=False
                 )
             )
-            # print(self.layers[-1].weight)
             self.layers.append(torch.nn.ReLU())
         self.layers: nn.ModuleList = nn.ModuleList(self.layers)
         self.inputs: List[torch.Tensor] = []
         self.outputs: List[torch.Tensor] = []
         self.activations: List[torch.Tensor] = []
-        self.lr: float = 1e-3
+        self.lr: float = CONFIG.lr
+        self.criterion = nn.MSELoss()
         self.optimizers: List[optim.SGD] = [
             optim.SGD(self.layers[2 * i].parameters(), lr=self.lr)
             for i in range(num_layers)
@@ -277,16 +292,11 @@ class Model(torch.nn.Module):
         optimizer = self.optimizers[layer_idx]
         optimizer.zero_grad()
         z.backward(gradient=torch.ones_like(z), retain_graph=True, inputs=[W, x])
-        # print()
-        # print(f"x.grad: {x.grad * grad}")
-        # print(f"W.grad: {W.grad * grad}")
-        # print()
         return x.grad * grad, W.grad * grad
 
     def update_layer(self, grad: torch.Tensor, layer_idx: int) -> torch.Tensor:
         layer: torch.nn.Linear = self.layers[2 * layer_idx]
         [param for param in layer.parameters()][0].grad = grad
-        # print(f"update grad: {grad}")
         optimizer = self.optimizers[layer_idx]
         optimizer.step()
         # with torch.no_grad():
@@ -300,7 +310,6 @@ class TorchDDPModel(DDPModel):
         super().__init__(num_layers)
 
         self._model: Model = Model(layer_size, num_layers, self._device, torch.float32)
-        self._criterion = nn.MSELoss()
 
     def start_train(self, x: torch.Tensor) -> torch.Tensor:
         # self._model.zero_grad()
@@ -313,7 +322,7 @@ class TorchDDPModel(DDPModel):
     def loss(self, pred: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, None]:
         y = y.to(self._device)
         pred = pred.to(self._device)
-        loss: torch.Tensor = self._criterion(pred, y)
+        loss: torch.Tensor = self._model.criterion(pred, y)
         loss.backward(retain_graph=True, inputs=[pred])
         return pred.grad, None
 
@@ -332,23 +341,29 @@ class TorchDDPModel(DDPModel):
         return updates
 
 
-def run_experiment(model: Type[DDPModel]) -> None:
-    actor_cls = model.options(num_gpus=1)
-    num_layers = 2
-    layer_size = 10
-    num_actors = 2
-    actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
+def generate_x_y(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
+    layer_size = config.layer_size
+    num_actors = config.num_actors
+    dtype = config.dtype
 
     shape = (num_actors * layer_size, layer_size)
     numel = shape[0] * shape[1]
-    dtype = torch.float32
-    # X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
-    # Y = torch.ones(shape, dtype=dtype) * 100
+
     x = torch.arange(numel, dtype=dtype, requires_grad=True) * 0.1
     x = x.reshape(shape)
     y = torch.arange(numel, dtype=dtype) * 10
     y = y.reshape(shape)
 
+    return x, y
+
+
+def run_experiment(model: Type[DDPModel]) -> None:
+    actor_cls = model.options(num_gpus=1)
+    num_layers, layer_size = CONFIG.num_layers, CONFIG.layer_size
+    num_actors = CONFIG.num_actors
+    actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
+
+    x, y = generate_x_y(CONFIG)
     xs = torch.tensor_split(x, num_actors)
     ys = torch.tensor_split(y, num_actors)
 
@@ -383,18 +398,20 @@ def run_experiment(model: Type[DDPModel]) -> None:
                 for actor, reduced_grad in zip(actors, reduced_grads)
             ]
             output.append(updates)
-        ends = [actor.finish_train.bind(*output[i]) for i, actor in enumerate(actors)]
+        ends = [
+            actor.finish_train.bind(
+                *[output[j][i] for j in reversed(range(num_layers))]
+            )
+            for i, actor in enumerate(actors)
+        ]
         dag = MultiOutputNode(ends)
 
     compiled_dag = dag.experimental_compile()
-    it = 1
+    it = CONFIG.it
     for _ in range(it):
         ref = compiled_dag.execute(*xs, *ys)
         result = ray.get(ref)
         print(f"[ray]: {result}")
-        print()
-        print()
-        print()
 
     compiled_dag.teardown()
 
@@ -403,49 +420,29 @@ def run_experiment(model: Type[DDPModel]) -> None:
 
 
 def check_torch_model_correctness() -> None:
-    layer_size = 10
-    num_actors = 2
-    shape = (num_actors * layer_size, layer_size)
-    numel = shape[0] * shape[1]
-    dtype = torch.float32
-    # X = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
-    # Y = torch.ones(shape, dtype=dtype) * 100
-    x = torch.arange(numel, dtype=dtype, requires_grad=True) * 0.1
-    x = x.reshape(shape)
-    y = torch.arange(numel, dtype=dtype) * 10
-    y = y.reshape(shape)
-
-    # check_torch_model_correctness_layer()
-    # check_torch_model_correctness_auto(X, Y)
-    check_torch_model_correctness_auto(x, y)
+    check_torch_model_correctness_auto()
     check_torch_model_correctness_dist()
 
 
-def check_torch_model_correctness_layer() -> None:
-    pass
-
-
-def check_torch_model_correctness_auto(X: torch.Tensor, Y: torch.Tensor) -> None:
+def check_torch_model_correctness_auto() -> None:
+    x, y = generate_x_y(CONFIG)
     device = "cuda:0"
-    X = X.to(device)
-    Y = Y.to(device)
-    model = Model(10, 2, device, torch.float32)
-    criterion = nn.MSELoss()
+    x = x.to(device)
+    y = y.to(device)
+    model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
+    criterion = model.criterion
     optimizer = optim.SGD(model.parameters(), lr=model.lr)
-    it = 1
 
-    for _ in range(it):
+    for _ in range(CONFIG.it):
         optimizer.zero_grad()
-        pred: torch.Tensor = model(X)
-        loss: torch.Tensor = criterion(pred, Y)
+        pred: torch.Tensor = model(x)
+        loss: torch.Tensor = criterion(pred, y)
         loss.backward()
-        # for param in model.parameters():
-        #     print(f"W grad: {param.grad}")
         optimizer.step()
 
     for i in range(0, len(model.layers), 2):
         layer: torch.nn.Linear = model.layers[i]
-        print(f"[auto] layer {i}: {layer.weight}")
+        print(f"[auto] layer {i // 2}: {layer.weight}")
 
 
 def setup(rank, world_size):
@@ -465,30 +462,24 @@ def demo_basic(rank, world_size):
     setup(rank, world_size)
 
     # create model and move it to GPU with id rank
-    model = Model(10, 2, f"cuda:{rank}", torch.float32).to(rank)
+    model = Model(
+        CONFIG.layer_size, CONFIG.num_layers, f"cuda:{rank}", CONFIG.dtype
+    ).to(rank)
     ddp_model = DDP(model, device_ids=[rank])
 
-    loss_fn = nn.MSELoss()
+    loss_fn = model.criterion
     optimizer = optim.SGD(ddp_model.parameters(), lr=model.lr)
-
     optimizer.zero_grad()
-    layer_size = 10
-    num_actors = 2
-    shape = (num_actors * layer_size, layer_size)
-    numel = shape[0] * shape[1]
-    dtype = torch.float32
-    # x = torch.ones(shape, dtype=dtype, requires_grad=True) * 10
-    # y = torch.ones(shape, dtype=dtype) * 100
-    x = torch.arange(numel, dtype=dtype, requires_grad=True) * 0.1
-    x = x.reshape(shape)
-    y = torch.arange(numel, dtype=dtype) * 10
-    y = y.reshape(shape)
+
+    num_actors = CONFIG.num_actors
+    x, y = generate_x_y(CONFIG)
     xs = torch.tensor_split(x, num_actors)
     ys = torch.tensor_split(y, num_actors)
     x = xs[rank]
     y = ys[rank]
     x = x.to(rank)
     y = y.to(rank)
+
     outputs = ddp_model(x)
     labels = y
     loss_fn(outputs, labels).backward()
@@ -496,7 +487,7 @@ def demo_basic(rank, world_size):
 
     for i in range(0, len(model.layers), 2):
         layer: torch.nn.Linear = model.layers[i]
-        print(f"[dist] layer {i}: {layer.weight}")
+        print(f"[dist] layer {i // 2}: {layer.weight}")
 
     cleanup()
 
@@ -507,19 +498,17 @@ def run_demo(demo_fn, world_size):
 
 def check_torch_model_correctness_dist():
     n_gpus = torch.cuda.device_count()
-    assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
+    assert (
+        n_gpus >= CONFIG.num_actors
+    ), f"Requires at least {CONFIG.num_actors} GPUs to run, but got {n_gpus}"
     world_size = n_gpus
     run_demo(demo_basic, world_size)
 
 
 def main() -> None:
-    # dataloader = load_data()
     ray.init()
-    if not USE_GPU:
-        print("No GPUs available")
-        return
-    if sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) < 2:
-        print("Needs at least 2 GPUs")
+    if sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) < CONFIG.num_actors:
+        print(f"Needs at least {CONFIG.num_actors} GPUs")
         return
 
     # run_experiment(DummyDDPModel)
