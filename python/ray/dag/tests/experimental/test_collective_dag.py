@@ -622,9 +622,8 @@ def test_custom_comm_compile_error(ray_start_regular):
 
     with pytest.raises(
         ValueError,
-        match="The custom NCCL group specified in "
-        "`dag.experimental_compile` must contain all actors "
-        "that participate in P2P NCCL send/recv.",
+        match="Custom NCCL group for P2P send/recv must contain "
+        "both the upstream and downstream actors.",
     ):
         dag.experimental_compile(_custom_nccl_group=comm)
 
