@@ -29,8 +29,8 @@ class Config:
     layer_size: int = 10  # The layer is a square.
     # Training config.
     dtype: torch.dtype = torch.float32
-    it: int = 1
-    lr: int = 1e-3
+    it: int = 20
+    lr: int = 1e-5
     # Distributed config.
     num_actors: int = 2
 
@@ -123,7 +123,6 @@ class Model(torch.nn.Module):
             self.layers.append(torch.nn.ReLU())
         self.layers: nn.ModuleList = nn.ModuleList(self.layers)
         self.inputs: List[torch.Tensor] = []
-        self.outputs: List[torch.Tensor] = []
         self.activations: List[torch.Tensor] = []
         self.lr: float = CONFIG.lr
         self.criterion = nn.MSELoss()
@@ -227,10 +226,6 @@ def run_experiment(model: Type[DDPModel]) -> None:
     num_actors = CONFIG.num_actors
     actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
 
-    x, y = generate_x_y(CONFIG)
-    xs = torch.tensor_split(x, num_actors)
-    ys = torch.tensor_split(y, num_actors)
-
     with InputNode() as inp:
         losses = []
         for i, actor in enumerate(actors):
@@ -273,6 +268,9 @@ def run_experiment(model: Type[DDPModel]) -> None:
     compiled_dag = dag.experimental_compile()
     it = CONFIG.it
     for _ in range(it):
+        x, y = generate_x_y(CONFIG)
+        xs = torch.tensor_split(x, num_actors)
+        ys = torch.tensor_split(y, num_actors)
         ref = compiled_dag.execute(*xs, *ys)
         result = ray.get(ref)
         print(f"[ray]: {result}")
@@ -289,18 +287,20 @@ def check_torch_model_correctness() -> None:
 
 
 def check_torch_model_correctness_auto() -> None:
-    x, y = generate_x_y(CONFIG)
     device = "cuda:0"
-    x = x.to(device)
-    y = y.to(device)
     model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
     criterion = model.criterion
     optimizer = optim.SGD(model.parameters(), lr=model.lr)
 
-    for _ in range(CONFIG.it):
+    for i in range(CONFIG.it):
+        x, y = generate_x_y(CONFIG)
+        x = x.to(device)
+        y = y.to(device)
         optimizer.zero_grad()
         pred: torch.Tensor = model(x)
         loss: torch.Tensor = criterion(pred, y)
+        print(f"it #{i}, loss: {loss}")
+        # loss.backward(retain_graph=True)
         loss.backward()
         optimizer.step()
 
@@ -336,18 +336,22 @@ def demo_basic(rank, world_size):
     optimizer.zero_grad()
 
     num_actors = CONFIG.num_actors
-    x, y = generate_x_y(CONFIG)
-    xs = torch.tensor_split(x, num_actors)
-    ys = torch.tensor_split(y, num_actors)
-    x = xs[rank]
-    y = ys[rank]
-    x = x.to(rank)
-    y = y.to(rank)
 
-    outputs = ddp_model(x)
-    labels = y
-    loss_fn(outputs, labels).backward()
-    optimizer.step()
+    for i in range(CONFIG.it):
+        x, y = generate_x_y(CONFIG)
+        xs = torch.tensor_split(x, num_actors)
+        ys = torch.tensor_split(y, num_actors)
+        x = xs[rank]
+        y = ys[rank]
+        x = x.to(rank)
+        y = y.to(rank)
+        outputs = ddp_model(x)
+        labels = y
+        loss = loss_fn(outputs, labels)
+        print(f"it #{i}, loss: {loss}")
+        # loss.backward(retain_graph=True)
+        loss.backward()
+        optimizer.step()
 
     for i in range(0, len(model.layers), 2):
         layer: torch.nn.Linear = model.layers[i]
