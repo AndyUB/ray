@@ -131,26 +131,37 @@ def print_elapses(
     print(f"[MLP split on {num_dist} device(s)][{typ}]{description}")
     total = 0
 
+    def s_to_ms(seconds: float) -> float:
+        return seconds * 1e3
+
+    def s_to_us(seconds: float) -> float:
+        return seconds * 1e6
+
     for i, (start, executed, end) in enumerate(elapses):
+        elapse = end - start
+        total += elapse
+        elapse = round(s_to_us(elapse))
         if print_exec:
             print(
                 f"#{i}: start={start}, executed={executed}(+{executed-start}), "
-                f"end={end}(+{end-executed}), elapse={end-start}"
+                f"end={end}(+{end-executed}), elapse={elapse}us"
             )
         else:
-            print(f"#{i}: start={start}, end={end}, elapse={end-start}")
-        total += end - start
+            print(f"#{i}: start={start}, end={end}, elapse={elapse}us")
 
     avg = total / len(elapses)
-    print(f"avg elapse: {avg}")
+    avg = round(s_to_us(avg))
+    print(f"avg elapse: {avg}us")
     if DISCARD_FIRST:
         assert len(elapses) > 1
         start, _, end = elapses[0]
         first = end - start
-        print(f"first it: {first}")
         total -= first
         avg = total / (len(elapses) - 1)
-        print(f"avg w/o 1st: {avg}")
+        first = round(s_to_us(first))
+        avg = round(s_to_us(avg))
+        print(f"first it: {first}us")
+        print(f"avg w/o 1st: {avg}us")
     return avg
 
 
@@ -368,7 +379,7 @@ class MLPPartActor:
     def torch_dist_reduce(self, x: torch.Tensor) -> Optional[torch.Tensor]:
         dist.reduce(x, 0)
         if self.rank == 0:
-            x = x + self.bias
+            x = x + self.model.bias
             return x
         else:
             return None
@@ -519,9 +530,17 @@ def main() -> None:
     ta = demo_tp_adag()
     td = demo_tp_dist()
 
-    lats = {"br": br, "ba": ba, "pr": pr, "pa": pa, "tr": tr, "ta": ta, "td": td}
+    lats = {
+        "basic ray": br,
+        "basic adag": ba,
+        "pipeline ray": pr,
+        "pipeline adag": pa,
+        "tensor ray": tr,
+        "tensor adag": ta,
+        "tensor torch distributed": td,
+    }
     for expr, lat in sorted(lats.items(), key=lambda x: x[1]):
-        print(f"[{expr}] {lat}")
+        print(f"[{expr}] {lat}us")
     ray.shutdown()
 
 
