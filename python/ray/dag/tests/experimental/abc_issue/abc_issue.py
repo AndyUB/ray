@@ -93,7 +93,7 @@ actors = [Worker.options(num_gpus=1).remote() for _ in range(num_workers)]
 # print(result)
 # compiled_dag.teardown()
 
-# [TODO] Failed: Deadlock
+# [TODO] Failed: Deadlock?
 # with InputNode() as inp:
 #     tensor1, tensor2 = actors[0].return_two.bind(inp)
 #     tensor3, tensor4 = actors[1].return_two.bind(inp)
@@ -105,7 +105,7 @@ actors = [Worker.options(num_gpus=1).remote() for _ in range(num_workers)]
 # print(result)
 # compiled_dag.teardown()
 
-# [TODO] Failed: Deadlock
+# [TODO] Failed: Deadlock?
 # with InputNode() as inp:
 #     tensor1, tensor2 = actors[0].return_two.bind(inp)
 #     tensor3, tensor4 = actors[1].return_two.bind(inp)
@@ -142,7 +142,7 @@ actors = [Worker.options(num_gpus=1).remote() for _ in range(num_workers)]
 # print(result)
 # compiled_dag.teardown()
 
-# [TODO] Failed: Deadlock
+# [TODO] Failed: Deadlock?
 # with InputNode() as inp:
 #     tensor1, tensor2 = actors[0].return_two.bind(inp)
 #     tensor3, tensor4 = actors[1].return_two.bind(inp)
