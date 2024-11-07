@@ -1103,9 +1103,9 @@ class CompiledDAG:
                     nccl_actors_p2p.add(downstream_actor_handle)
 
         # Collect all leaf nodes.
-        leaf_nodes: DAGNode = []
+        leaf_nodes: List[Union[ClassMethodNode, InputAttributeNode]] = []
         for idx, task in self.idx_to_task.items():
-            if not isinstance(task.dag_node, ClassMethodNode):
+            if not isinstance(task.dag_node, (ClassMethodNode, InputAttributeNode)):
                 continue
             if (
                 len(task.downstream_task_idxs) == 0
@@ -1119,7 +1119,7 @@ class CompiledDAG:
                 "Compiled DAG doesn't support leaf nodes, i.e., nodes that don't have "
                 "downstream nodes and are not output nodes. There are "
                 f"{len(leaf_nodes)} leaf nodes in the DAG. Please add the outputs of "
-                f"{[leaf_node.get_method_name() for leaf_node in leaf_nodes]} to the "
+                f"{[leaf_node.get_method_name() if isinstance(leaf_node, ClassMethodNode) else leaf_node for leaf_node in leaf_nodes]} to the "
                 f"the MultiOutputNode."
             )
 
