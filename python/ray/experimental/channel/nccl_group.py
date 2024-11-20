@@ -124,6 +124,11 @@ class _NcclGroup(GPUCommunicator):
                 self._send_stream = self._cuda_stream
                 self._recv_stream = self._cuda_stream
 
+        print(
+            f"overlapping: {use_communication_streams}, "
+            f"send stream: {self._send_stream}, recv stream: {self._recv_stream}, "
+            f"cuda stream: {self._cuda_stream}"
+        )
         self._closed = False
 
     def initialize(self, rank: int) -> None:

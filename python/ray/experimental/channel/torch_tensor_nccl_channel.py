@@ -170,6 +170,7 @@ class TorchTensorNcclChannel(ChannelInterface):
                 # non-tensor data channel if it is available.
                 raise value
 
+        print("TorchTensorNcclChannel.write")
         if self._cpu_data_channel is None:
             # Handle the case where _direct_return=True. In this case, we check
             # that the task returned a CUDA torch.Tensor and just send it
@@ -470,6 +471,12 @@ class _TorchTensorNcclChannel(ChannelInterface):
         metadata = self._get_send_tensors_metadata(tensors)
         if metadata is not None:
             self._meta_channel.write(metadata)
+
+        # import time
+
+        # print(f"Sleeping for 5 seconds before sending tensors")
+        # time.sleep(5)
+        # print(f"Slept for 5 seconds")
 
         # NOTE(swang): We must send the metadata *before* launching the NCCL
         # send. We are using blocking NCCL ops, so the following calls will

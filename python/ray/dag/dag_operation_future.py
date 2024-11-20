@@ -82,6 +82,10 @@ class GPUFuture(DAGOperationFuture[Any]):
         self._buf = buf
         self._event = cp.cuda.Event()
         self._event.record(stream)
+        print(
+            f"device: {cp.cuda.Device().id}, stream: {stream}, GPUFuture.init: {self._buf}"
+        )
+        print(f"is legacy: {stream is cp.cuda.Stream.null}")
 
     def wait(self) -> Any:
         """
@@ -91,5 +95,14 @@ class GPUFuture(DAGOperationFuture[Any]):
         import cupy as cp
 
         current_stream = cp.cuda.get_current_stream()
+        import time
+
+        start = time.perf_counter()
         current_stream.wait_event(self._event)
+        end = time.perf_counter()
+        print(f"wait_event time: {end - start}")
+        print(
+            f"device: {cp.cuda.Device().id}, stream: {current_stream}, GPUFuture.wait: {self._buf}"
+        )
+        print(f"is legacy: {current_stream is cp.cuda.Stream.null}")
         return self._buf

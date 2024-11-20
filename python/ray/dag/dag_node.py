@@ -244,6 +244,7 @@ class DAGNode(DAGNodeBase):
         # this in the constructor because the output node is determined when
         # `experimental_compile` is called.
         self.is_adag_output_node = True
+        print(f"compiling, overlap_gpu_communication: {_overlap_gpu_communication}")
         return build_compiled_dag_from_ray_dag(
             self,
             _execution_timeout,

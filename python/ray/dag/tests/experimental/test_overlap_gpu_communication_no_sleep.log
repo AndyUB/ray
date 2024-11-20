@@ -1,0 +1,45 @@
+compiling, overlap_gpu_communication: True
+overlapping: False, send stream: None, recv stream: None, cuda stream: None
+[36m(Worker pid=1274876)[0m overlapping: True, send stream: <ExternalStream 94830726419488 (device 0)>, recv stream: <ExternalStream 94830722118800 (device 0)>, cuda stream: <ExternalStream 0 (device 0)>
+[36m(Worker pid=1274880)[0m overlapping: True, send stream: <ExternalStream 94721606555424 (device 0)>, recv stream: <ExternalStream 94721606183744 (device 0)>, cuda stream: <ExternalStream 0 (device 0)>
+[36m(Worker pid=1274876)[0m timestamp: 2426179.194187528, operation type: _DAGNodeOperationType.READ start
+[36m(Worker pid=1274876)[0m timestamp: 2426179.194250036, operation type: _DAGNodeOperationType.READ end
+[36m(Worker pid=1274876)[0m device: 0, stream: <Stream 0 (device -1)>, GPUFuture.init: [10]
+[36m(Worker pid=1274876)[0m is legacy: True
+[36m(Worker pid=1274876)[0m timestamp: 2426179.195512301, operation type: _DAGNodeOperationType.COMPUTE start
+[36m(Worker pid=1274876)[0m timestamp: 2426179.195532519, operation type: _DAGNodeOperationType.COMPUTE end
+[36m(Worker pid=1274876)[0m wait_event time: 5.851034075021744e-06
+[36m(Worker pid=1274876)[0m device: 0, stream: <Stream 0 (device -1)>, GPUFuture.wait: [10]
+[36m(Worker pid=1274876)[0m is legacy: True
+[36m(Worker pid=1274876)[0m compute: [10]
+[36m(Worker pid=1274880)[0m timestamp: 2426179.194511921, operation type: _DAGNodeOperationType.READ start
+[36m(Worker pid=1274880)[0m timestamp: 2426179.195630113, operation type: _DAGNodeOperationType.READ end
+[36m(Worker pid=1274876)[0m device: 0, stream: <Stream 0 (device -1)>, GPUFuture.init: tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')
+[36m(Worker pid=1274876)[0m is legacy: True
+[36m(Worker pid=1274876)[0m timestamp: 2426179.295302784, operation type: _DAGNodeOperationType.WRITE start
+[36m(Worker pid=1274876)[0m timestamp: 2426179.295354001, operation type: _DAGNodeOperationType.WRITE end
+[36m(Worker pid=1274876)[0m wait_event time: 7.013324648141861e-06
+[36m(Worker pid=1274876)[0m device: 0, stream: <ExternalStream 94830726419488 (device 0)>, GPUFuture.wait: tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')
+[36m(Worker pid=1274876)[0m is legacy: False
+[36m(Worker pid=1274876)[0m TorchTensorNcclChannel.write
+[36m(Worker pid=1274876)[0m timestamp: 2426179.307205076, operation type: _DAGNodeOperationType.READ start
+[36m(Worker pid=1274876)[0m timestamp: 2426179.307226947, operation type: _DAGNodeOperationType.READ end
+[36m(Worker pid=1274880)[0m device: 0, stream: <ExternalStream 94721606183744 (device 0)>, GPUFuture.init: [tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')]
+[36m(Worker pid=1274880)[0m is legacy: False
+[36m(Worker pid=1274880)[0m timestamp: 2426179.386757514, operation type: _DAGNodeOperationType.COMPUTE start
+[36m(Worker pid=1274880)[0m timestamp: 2426179.38678168, operation type: _DAGNodeOperationType.COMPUTE end
+[36m(Worker pid=1274880)[0m wait_event time: 7.063150405883789e-06
+[36m(Worker pid=1274880)[0m device: 0, stream: <Stream 0 (device -1)>, GPUFuture.wait: [tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')]
+[36m(Worker pid=1274880)[0m is legacy: True
+[36m(Worker pid=1274880)[0m compute: [tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')]
+[36m(Worker pid=1274880)[0m Worker.recv: tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')
+[36m(Worker pid=1274880)[0m device: 0, stream: <Stream 0 (device -1)>, GPUFuture.init: tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')
+[36m(Worker pid=1274880)[0m is legacy: True
+[36m(Worker pid=1274880)[0m timestamp: 2426179.389956326, operation type: _DAGNodeOperationType.WRITE start
+[36m(Worker pid=1274880)[0m timestamp: 2426179.389970693, operation type: _DAGNodeOperationType.WRITE end
+[36m(Worker pid=1274880)[0m wait_event time: 2.573709934949875e-06
+[36m(Worker pid=1274880)[0m device: 0, stream: <Stream 0 (device -1)>, GPUFuture.wait: tensor([10., 10., 10.,  ..., 10., 10., 10.], device='cuda:0')
+[36m(Worker pid=1274880)[0m is legacy: True
+[36m(Worker pid=1274880)[0m timestamp: 2426179.391480024, operation type: _DAGNodeOperationType.READ start
+[36m(Worker pid=1274880)[0m timestamp: 2426179.391505322, operation type: _DAGNodeOperationType.READ end
+timestamp: 2426179.395274732, result: tensor([10., 10., 10.,  ..., 10., 10., 10.])

@@ -563,6 +563,7 @@ class ExecutableTask:
             True if system error occurs and exit the loop; otherwise, False.
         """
         input_data = self.reset_and_wait_intermediate_future()
+        print(f"compute: {input_data}")
         try:
             _process_return_vals(input_data, return_single_output=False)
         except Exception as exc:
@@ -635,13 +636,18 @@ class ExecutableTask:
         Returns:
             True if the next operation should not be executed; otherwise, False.
         """
+        import time
+        print(f"timestamp: {time.perf_counter()}, operation type: {op_type} start")
         if op_type == _DAGNodeOperationType.READ:
             with self._recv_stream:
+                print(f"timestamp: {time.perf_counter()}, operation type: {op_type} end")
                 return self._read(overlap_gpu_communication)
         elif op_type == _DAGNodeOperationType.COMPUTE:
+            print(f"timestamp: {time.perf_counter()}, operation type: {op_type} end")
             return self._compute(overlap_gpu_communication, class_handle)
         elif op_type == _DAGNodeOperationType.WRITE:
             with self._send_stream:
+                print(f"timestamp: {time.perf_counter()}, operation type: {op_type} end")
                 return self._write()
 
 
