@@ -10,8 +10,7 @@ num_actors=2
 num_layer=64
 
 RAY_DEDUP_LOGS=0 \
-    nsys profile \
-    python3 ddp.py \
+    python3 ddp_profile.py \
     --num-layers $num_layer \
     --layer-size $layer_size \
     --dtype $dtype \
