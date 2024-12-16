@@ -193,6 +193,7 @@ class RayDDPWorker:
         breakdown_performance: bool,
     ):
         self.num_layers = num_layers
+        self.layer_size = layer_size
         # Each device has a single GPU.
         self.device = torch_utils.get_devices()[0]
 
@@ -219,6 +220,8 @@ class RayDDPWorker:
 
         self.profiler = profile(
             activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True,
+            with_stack=True,
         )
         self.profiler.__enter__()
 
@@ -442,7 +445,10 @@ class RayDDPWorker:
         rank: Rank of the actor.
         """
         self.profiler.__exit__(None, None, None)
-        self.profiler.export_chrome_trace(f"ray_ddp_profiling_{rank}.json")
+        self.profiler.export_chrome_trace(
+            f"ray_ddp_profiling_{self.num_layers}_layers_"
+            f"{self.layer_size}_size_{rank}_rank.json"
+        )
         # The profiler cannot be reused after it is stopped.
         self.profiler = None
 
@@ -613,8 +619,11 @@ def run_torch_ddp_per_process(
     if config.check_correctness:
         weights = []
     elapses = []
+    timestamps = []
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        record_shapes=True,
+        with_stack=True,
     ) as prof:
         for i in range(config.num_iters):
             x, y = generate_input_output(config)
@@ -622,11 +631,18 @@ def run_torch_ddp_per_process(
             y = torch.tensor_split(y, num_actors)[rank].to(rank)
             start = time.perf_counter()
             optimizer.zero_grad()
+            pre_forward = time.perf_counter()
             prediction: torch.Tensor = ddp_model(x)
+            post_forward = time.perf_counter()
             loss: torch.Tensor = loss_fn(prediction, y)
+            pre_backward = time.perf_counter()
             loss.backward()
+            post_backward = time.perf_counter()
             optimizer.step()
             end = time.perf_counter()
+            timestamps.append(
+                (start, pre_forward, post_forward, pre_backward, post_backward, end)
+            )
 
             if config.check_correctness:
                 cur_iter_weights = []
@@ -639,7 +655,39 @@ def run_torch_ddp_per_process(
             elapses.append(elapse)
             prof.step()
 
-    prof.export_chrome_trace(f"torch_ddp_profiling_{rank}.json")
+    prof.export_chrome_trace(
+        f"torch_ddp_profiling_{config.num_layers}_layers_"
+        f"{config.layer_size}_size_{rank}_rank.json"
+    )
+    for i, (
+        start,
+        pre_forward,
+        post_forward,
+        pre_backward,
+        post_backward,
+        end,
+    ) in enumerate(timestamps):
+        logger.info(f"===========Torch DDP Iteration {i}===========")
+        logger.info(
+            f"start: {secs_to_micros(start)}, "
+            f"pre_forward: {secs_to_micros(pre_forward)}, "
+            f"post_forward: {secs_to_micros(post_forward)}, "
+            f"pre_backward: {secs_to_micros(pre_backward)}, "
+            f"post_backward: {secs_to_micros(post_backward)}, "
+            f"end: {secs_to_micros(end)}"
+        )
+        zero_grad_elapse = pre_forward - start
+        forward_elapse = post_forward - pre_forward
+        loss_elapse = pre_backward - post_forward
+        backward_elapse = post_backward - pre_backward
+        update_elapse = end - post_backward
+        logger.info(
+            f"zero_grad: {secs_to_micros(zero_grad_elapse)}, "
+            f"forward: {secs_to_micros(forward_elapse)}, "
+            f"loss: {secs_to_micros(loss_elapse)}, "
+            f"backward: {secs_to_micros(backward_elapse)}, "
+            f"update: {secs_to_micros(update_elapse)}"
+        )
     avg_elapse = print_elapses(elapses, f"torch ddp rank: {rank}", rank)
 
     # Destroy the process group.
