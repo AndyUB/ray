@@ -11,6 +11,7 @@ import ray.cluster_utils
 import ray.experimental.collective as collective
 import torch
 import time
+import torch.profiler
 from ray.air._internal import torch_utils
 from ray.dag import InputNode
 from ray.exceptions import RayChannelError
@@ -37,6 +38,36 @@ USE_GPU = bool(os.environ.get("RAY_PYTEST_USE_GPU", 0))
 class TorchTensorWorker:
     def __init__(self):
         self.device = torch_utils.get_devices()[0]
+
+    def init_profiler(self, rank: int, overlap_gpu_communication: bool):
+        print(
+            f"Initializing profiler for worker {rank} with {overlap_gpu_communication}"
+        )
+        self.profiler = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.XPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            record_shapes=True,
+            with_stack=True,
+            # on_trace_ready=torch.profiler.tensorboard_trace_handler(
+            #     f"log/torch_tensor_worker_{rank}_{overlap_gpu_communication}"
+            # ),
+        )
+
+    def start_profiler(self):
+        self.profiler.__enter__()
+
+    def stop_profiler(
+        self,
+        rank: int,
+        overlap_gpu_communication: bool,
+    ):
+        self.profiler.__exit__(None, None, None)
+        self.profiler.export_chrome_trace(
+            f"worker{rank}_{overlap_gpu_communication}.json"
+        )
 
     def init_distributed(self, world_size, rank):
         torch.distributed.init_process_group(
@@ -296,6 +327,8 @@ def test_torch_tensor_nccl_overlap_collective(
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
     num_workers = 2
     workers = [actor_cls.remote() for _ in range(num_workers)]
+    for rank, worker in enumerate(workers):
+        worker.init_profiler.remote(rank, overlap_gpu_communication)
 
     dtype = torch.float16
     collective_shape = (100000000,)
@@ -321,6 +354,8 @@ def test_torch_tensor_nccl_overlap_collective(
     )
 
     elapses = []
+    for worker in workers:
+        worker.start_profiler.remote()
     start = time.monotonic()
     for i in range(5):
         iter_start = time.monotonic()
@@ -334,6 +369,8 @@ def test_torch_tensor_nccl_overlap_collective(
             + [(i + 1000, compute_shape, dtype)] * num_workers
         )
     duration = time.monotonic() - start
+    for rank, worker in enumerate(workers):
+        worker.stop_profiler.remote(rank, overlap_gpu_communication)
     print(f"{overlap_gpu_communication=}, {duration=}")
     for i, elapse in enumerate(elapses):
         print(f"iteration {i=}, {elapse=}")
