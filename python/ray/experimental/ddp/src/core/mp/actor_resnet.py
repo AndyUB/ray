@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Tuple
 
 import ray._private.worker
 import torch
+from torch.profiler import profile, ProfilerActivity
 
 import ray
 from ..common import secs_to_micros
@@ -45,6 +46,13 @@ class ResnetActor:
 
         self.nccl_group: _NcclGroup = None
 
+        self.profiler = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True,
+            # with_stack=True,
+        )
+        self.profiler.__enter__()
+
     def init_weights(self) -> None:
         raise NotImplementedError
 
@@ -65,6 +73,12 @@ class ResnetActor:
         ).to(
             self.device,
         )
+
+    def fetch_profile(self) -> None:
+        self.profiler.__exit__(None, None, None)
+        self.profiler.export_chrome_trace(f"trace_rank{self.rank}.json")
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Actor {self.rank} saved trace.")
 
     def update_time(self, key: str) -> None:
         timestamp = time.perf_counter()

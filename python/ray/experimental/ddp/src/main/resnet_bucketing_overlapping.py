@@ -94,6 +94,7 @@ def train_cot(
         for actor in actors:
             ray.get(actor.finish_tracing.remote())
 
+    ray.get([actor.fetch_profile.remote() for actor in actors])
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     actors_to_serializations = [elapse["serialization"] for elapse in actors_to_elapses]
     actors_to_deserializations = [

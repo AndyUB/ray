@@ -494,7 +494,7 @@ class ResNetMP(nn.Module):
             show_module_size(module)
         print()
 
-        BUCKET_SIZE = 25
+        BUCKET_SIZE = 100
 
         self.bucket_modules: List[BucketModule] = []
         bucket_list: List[nn.Module] = []
@@ -519,6 +519,7 @@ class ResNetMP(nn.Module):
             self.bucket_modules.append(BucketModule(bucket_list))
         self.bucket_modules.append(BucketModule([self.fc], to_flat=True))
 
+        logger.info(f"Number of buckets: {len(self.bucket_modules)}")
         for bucket in self.bucket_modules:
             logger.info(
                 f"Bucket size: {sum(calculate_module_size(m) for m in bucket.mods):.2f} MiB"
