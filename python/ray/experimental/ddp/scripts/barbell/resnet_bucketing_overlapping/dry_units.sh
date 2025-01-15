@@ -33,7 +33,7 @@ rm -f $output_path/*.log
 
 num_models=12
 num_actors=2
-num_epochs=10
+num_epochs=2
 latency_prefix=${timestamp}_latency
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log

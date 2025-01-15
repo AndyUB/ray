@@ -347,6 +347,7 @@ class BucketModule(nn.Module):
         self.y = None
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optimizer = torch.optim.SGD(self.mods.parameters(), lr=0.001)
+        self.grads_cat = torch.randn(10).to("cuda:0")
 
     def forward(self, x: Tensor) -> Tensor:
         if self.to_flat:
@@ -377,8 +378,7 @@ class BucketModule(nn.Module):
         # grads_cat = parameters_to_vector(
         #     [p.grad for p in self.mods.parameters() if p.grad is not None]
         # )
-        grads_cat = torch.randn(10).to("cuda:0")
-        return grads_cat
+        return self.grads_cat
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
         self.optimizer.zero_grad()

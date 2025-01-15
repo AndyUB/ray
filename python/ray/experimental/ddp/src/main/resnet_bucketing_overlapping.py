@@ -77,6 +77,7 @@ def train_cot(
     BATCH_SIZE = 32
 
     total_elapses: List[int] = []
+    ray.get([actor.start_profile.remote() for actor in actors])
     for epoch in range(num_epochs):
         for actor in actors:
             ray.get(actor.init_training.remote(BATCH_SIZE))
@@ -98,6 +99,7 @@ def train_cot(
         time.sleep(3)
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    ray.get([actor.fetch_profile.remote() for actor in actors])
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
     if not check_tracing:

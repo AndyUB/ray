@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 import torch
+from torch.profiler import profile, ProfilerActivity
 
 import ray
 from ..common import secs_to_micros
@@ -39,6 +40,11 @@ class ResnetActor:
         self.it = 0
         self.time: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
+        self.profiler = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            with_stack=True,
+            record_shapes=True,
+        )
 
     def init_weights(self) -> None:
         raise NotImplementedError
@@ -189,3 +195,22 @@ class ResnetActor:
             self.update_time("update_ends")
         if idx == 0:
             self.update_time("end")
+
+    def start_profile(self) -> None:
+        self.profiler.__enter__()
+
+    def fetch_profile(self) -> None:
+        self.profiler.__exit__(None, None, None)
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            self.profiler.key_averages().table(
+                sort_by="self_cpu_time_total", row_limit=20
+            )
+        )
+        logger.warning(
+            self.profiler.key_averages().table(
+                sort_by="cpu_time_total",
+                row_limit=20,
+            )
+        )
+        self.profiler.export_chrome_trace(f"profile_{self.rank}.json")
