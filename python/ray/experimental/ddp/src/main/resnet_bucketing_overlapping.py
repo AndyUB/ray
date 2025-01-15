@@ -78,6 +78,8 @@ def train_cot(
     BATCH_SIZE = 32
 
     total_elapses: List[int] = []
+    for actor in actors:
+        ray.get(actor.start_profile.remote())
     for epoch in range(num_epochs):
         for actor in actors:
             ray.get(actor.init_training.remote(BATCH_SIZE))
@@ -95,60 +97,8 @@ def train_cot(
             ray.get(actor.finish_tracing.remote())
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
-    actors_to_serializations = [elapse["serialization"] for elapse in actors_to_elapses]
-    actors_to_deserializations = [
-        elapse["deserialization"] for elapse in actors_to_elapses
-    ]
-    total_len = sum(
-        [
-            len(single_iter_traces)
-            for single_actor_traces in actors_to_serializations
-            for single_iter_traces in single_actor_traces
-        ]
-    ) + sum(
-        [
-            len(single_iter_traces)
-            for single_actor_traces in actors_to_deserializations
-            for single_iter_traces in single_actor_traces
-        ]
-    )
-    unique_traces = set(
-        [
-            trace
-            for single_actor_traces in actors_to_serializations
-            for single_iter_traces in single_actor_traces
-            for trace in single_iter_traces
-        ]
-        + [
-            trace
-            for single_actor_traces in actors_to_deserializations
-            for single_iter_traces in single_actor_traces
-            for trace in single_iter_traces
-        ]
-    )
-    unique_len = len(unique_traces)
-    logger.warning(f"total serialization traces: {total_len}, unique: {unique_len}")
-
-    def avg_elapses(
-        actors_to_elapses: List[List[List[Tuple[float, float]]]]
-    ) -> List[List[float]]:
-        actors_to_avg_elapses = []
-        for single_actor_traces in actors_to_elapses:
-            elapses_across_iters = []
-            for single_iter_traces in single_actor_traces:
-                total_elapse = 0
-                for start, end in single_iter_traces:
-                    total_elapse += end - start
-                total_elapse = secs_to_micros(total_elapse)
-                elapses_across_iters.append(total_elapse)
-            actors_to_avg_elapses.append(elapses_across_iters)
-        return actors_to_avg_elapses
-
-    actors_to_avg_serialization_elapses = avg_elapses(actors_to_serializations)
-    actors_to_avg_deserialization_elapses = avg_elapses(actors_to_deserializations)
-    for i, actor_elapses in enumerate(actors_to_elapses):
-        actor_elapses["serialization"] = actors_to_avg_serialization_elapses[i]
-        actor_elapses["deserialization"] = actors_to_avg_deserialization_elapses[i]
+    for actor in actors:
+        ray.get(actor.fetch_profile.remote())
 
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses

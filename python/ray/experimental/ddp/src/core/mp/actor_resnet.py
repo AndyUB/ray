@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
 import torch
+from torch.profiler import profile, ProfilerActivity
 
 import ray
 import ray._private.worker
@@ -44,9 +45,17 @@ class ResnetActor:
         self.elapses: Dict[str, List] = defaultdict(list)
 
         self.nccl_group: _NcclGroup = None
+        self.profiler = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            with_stack=True,
+            record_shapes=True,
+        )
 
     def init_weights(self) -> None:
         raise NotImplementedError
+
+    def start_profile(self) -> None:
+        self.profiler.__enter__()
 
     def init_training(self, batch_size: int) -> None:
         self.models[0].x = torch.randn(
@@ -80,6 +89,8 @@ class ResnetActor:
             "forward_ends": [],
             "backward_starts": [],
             "backward_ends": [],
+            # "allreduce_starts": [],
+            # "allreduce_ends": [],
             "update_starts": [],
             "update_ends": [],
         }
@@ -98,8 +109,8 @@ class ResnetActor:
         logger = logging.getLogger(__name__)
         logger.warning(f"Actor {self.rank} finished iteration {self.it}")
         self.it += 1
-        if self.it <= 1:
-            return
+        # if self.it <= 1:
+        #     return
 
         total = self.time["end"] - self.time["start"]
 
@@ -131,9 +142,17 @@ class ResnetActor:
                     for i in range(self.num_models)
                 ]
             )
+            # bw_allreduce = sum(
+            #     [
+            #         self.time["allreduce_ends"][i] - self.time["allreduce_starts"][i]
+            #         for i in range(self.num_models)
+            #     ]
+            # )
+            # bw_others = bw_total - bw_backward - bw_update - bw_allreduce
             bw_others = bw_total - bw_backward - bw_update
             log("bw.total", bw_total)
             log("bw.backward", bw_backward)
+            # log("bw.allreduce", bw_allreduce)
             log("bw.others", bw_others)
             log("bw.update", bw_update)
             # logger.warning("")
@@ -154,6 +173,22 @@ class ResnetActor:
 
     def fetch_traces(self) -> Dict[str, List[float]]:
         return self.elapses
+
+    def fetch_profile(self) -> None:
+        self.profiler.__exit__(None, None, None)
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            self.profiler.key_averages().table(
+                sort_by="self_cpu_time_total", row_limit=20
+            )
+        )
+        logger.warning(
+            self.profiler.key_averages().table(
+                sort_by="cpu_time_total",
+                row_limit=20,
+            )
+        )
+        self.profiler.export_chrome_trace(f"profile_{self.rank}.json")
 
     def forward(self, _) -> None:
         self.update_time("start")
@@ -199,7 +234,18 @@ class ResnetActor:
         self.nccl_group = ctx.nccl_groups[nccl_group_id]
 
     def allreduce(self, grad: torch.Tensor) -> torch.Tensor:
+        if self.check_tracing:
+            self.update_time("allreduce_starts")
         self.nccl_group.allreduce(grad, grad)
+        if self.check_tracing:
+            self.update_time("allreduce_ends")
+            start = self.time["allreduce_starts"][-1]
+            end = self.time["allreduce_ends"][-1]
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Actor {self.rank} iteration {self.it} "
+                f"allreduce elapse: {secs_to_micros(end - start)} us"
+            )
         return grad
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:

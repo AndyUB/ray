@@ -102,6 +102,8 @@ def train_cot(
             ray.get(actor.finish_tracing.remote())
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    for actor in actors:
+        ray.get(actor.fetch_profile.remote())
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
     if not check_tracing:
@@ -116,6 +118,7 @@ def train_cot(
             "fw.total",
             "bw.total",
             "bw.backward",
+            "bw.allreduce",
             "bw.others",
             "bw.update",
             "serialization",

@@ -494,7 +494,7 @@ class ResNetMP(nn.Module):
             show_module_size(module)
         print()
 
-        BUCKET_SIZE = 25
+        BUCKET_SIZE = 100
 
         self.bucket_modules: List[BucketModule] = []
         bucket_list: List[nn.Module] = []
