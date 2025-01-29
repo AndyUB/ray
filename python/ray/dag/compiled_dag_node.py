@@ -574,56 +574,56 @@ class ExecutableTask:
             True if the next operation should not be executed; otherwise, False.
         """
         if self.requires_nccl_read:
-            input_values = [P2POp.RECV, self.nccl_ch]
+            stream = self._recv_stream
+        elif self.requires_nccl_write:
+            stream = self._send_stream
+        elif self.requires_nccl_collective:
+            stream = self._collective_stream
         else:
-            try:
-                input_data = self.input_reader.read()
-            except RayChannelError:
-                return True
+            stream = nullcontext()
 
-            try:
-                _process_return_vals(input_data, return_single_output=False)
-                input_data_ready = []
-                for val in input_data:
-                    if isinstance(val, DAGOperationFuture):
-                        val = val.wait()
-                        if isinstance(val, RayTaskError):
-                            raise val.as_instanceof_cause()
-                    input_data_ready.append(val)
-                input_values = []
-                for task_input in self.task_inputs:
-                    input_values.append(task_input.resolve(input_data_ready))
-            except Exception as exc:
-                input_values = None
-                self.wrap_and_set_intermediate_future(
-                    exc, wrap_in_gpu_future=overlap_gpu_communication
-                )
-
-            if self.requires_nccl_write:
-                if input_values is not None:
-                    assert len(input_values) == 1
-                    tensor = input_values[0]
-                    input_values = [P2POp.SEND, self.nccl_ch, tensor]
-                else:
-                    exc = self.fetch_intermediate_future(wait_gpu_future=True)
-                    input_values = [P2POp.SEND, self.nccl_ch, exc]
-
-        if input_values is not None:
-            if self.nccl_op is not None:
-                method = self.nccl_op.execute
-            else:
-                method = getattr(class_handle, self.method_name)
-
+        with stream:
             if self.requires_nccl_read:
-                stream = self._recv_stream
-            elif self.requires_nccl_write:
-                stream = self._send_stream
-            elif self.requires_nccl_collective:
-                stream = self._collective_stream
+                input_values = [P2POp.RECV, self.nccl_ch]
             else:
-                stream = nullcontext()
+                try:
+                    input_data = self.input_reader.read()
+                except RayChannelError:
+                    return True
 
-            with stream:
+                try:
+                    _process_return_vals(input_data, return_single_output=False)
+                    input_data_ready = []
+                    for val in input_data:
+                        if isinstance(val, DAGOperationFuture):
+                            val = val.wait()
+                            if isinstance(val, RayTaskError):
+                                raise val.as_instanceof_cause()
+                        input_data_ready.append(val)
+                    input_values = []
+                    for task_input in self.task_inputs:
+                        input_values.append(task_input.resolve(input_data_ready))
+                except Exception as exc:
+                    input_values = None
+                    self.wrap_and_set_intermediate_future(
+                        exc, wrap_in_gpu_future=overlap_gpu_communication
+                    )
+
+                if self.requires_nccl_write:
+                    if input_values is not None:
+                        assert len(input_values) == 1
+                        tensor = input_values[0]
+                        input_values = [P2POp.SEND, self.nccl_ch, tensor]
+                    else:
+                        exc = self.fetch_intermediate_future(wait_gpu_future=True)
+                        input_values = [P2POp.SEND, self.nccl_ch, exc]
+
+            if input_values is not None:
+                if self.nccl_op is not None:
+                    method = self.nccl_op.execute
+                else:
+                    method = getattr(class_handle, self.method_name)
+
                 try:
                     output_val = method(*input_values, **self.resolved_kwargs)
                 except RayChannelError:
@@ -639,17 +639,17 @@ class ExecutableTask:
                         output_val, wrap_in_gpu_future=overlap_gpu_communication
                     )
 
-        if not self.requires_nccl_write:
-            if (
-                self.requires_nccl_read or self.requires_nccl_collective
-            ) and overlap_gpu_communication:
-                output_val = self.fetch_intermediate_future(wait_gpu_future=False)
-            else:
-                output_val = self.fetch_intermediate_future(wait_gpu_future=True)
-            try:
-                self.output_writer.write(output_val)
-            except RayChannelError:
-                return True
+            if not self.requires_nccl_write:
+                if (
+                    self.requires_nccl_read or self.requires_nccl_collective
+                ) and overlap_gpu_communication:
+                    output_val = self.fetch_intermediate_future(wait_gpu_future=False)
+                else:
+                    output_val = self.fetch_intermediate_future(wait_gpu_future=True)
+                try:
+                    self.output_writer.write(output_val)
+                except RayChannelError:
+                    return True
 
         return False
 

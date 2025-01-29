@@ -266,6 +266,22 @@ class _NcclGroup(GPUCommunicator):
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
+        import time
+        import torch
+
+        start = time.perf_counter()
+
+        temp_buf = torch.empty_like(recv_buf)
+        for _ in range(1000):
+            self._comm.allReduce(
+                self.nccl_util.get_tensor_ptr(send_buf),
+                self.nccl_util.get_tensor_ptr(temp_buf),
+                send_buf.numel(),
+                self.nccl_util.get_nccl_tensor_dtype(send_buf),
+                op.value,
+                self._collective_stream.ptr,
+            )
+
         self._comm.allReduce(
             self.nccl_util.get_tensor_ptr(send_buf),
             self.nccl_util.get_tensor_ptr(recv_buf),
@@ -284,6 +300,9 @@ class _NcclGroup(GPUCommunicator):
             self._collective_stream.synchronize()
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
+
+        end = time.perf_counter()
+        print(f"allreduce launch time: {end-start}")
 
     @property
     def recv_stream(self) -> Optional["cp.cuda.ExternalStream"]:
