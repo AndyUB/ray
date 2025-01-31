@@ -573,6 +573,8 @@ class ExecutableTask:
         Returns:
             True if the next operation should not be executed; otherwise, False.
         """
+        # [TODO] `P2POp.*` could be saved directly to `P2POperation`.
+        # Or they are passed to ExecutableTask.
         if self.requires_nccl_read:
             input_values = [P2POp.RECV, self.nccl_ch]
         else:
@@ -595,6 +597,7 @@ class ExecutableTask:
                     input_values.append(task_input.resolve(input_data_ready))
             except Exception as exc:
                 input_values = None
+                # [TODO] Save the exception directly.
                 self.wrap_and_set_intermediate_future(
                     exc, wrap_in_gpu_future=overlap_gpu_communication
                 )
@@ -605,6 +608,7 @@ class ExecutableTask:
                     tensor = input_values[0]
                     input_values = [P2POp.SEND, self.nccl_ch, tensor]
                 else:
+                    # [TODO] Use the saved exception.
                     exc = self.fetch_intermediate_future(wait_gpu_future=True)
                     input_values = [P2POp.SEND, self.nccl_ch, exc]
 
@@ -629,16 +633,19 @@ class ExecutableTask:
                 except RayChannelError:
                     return True
                 except Exception as exc:
+                    # [TODO] Do we need to raise?
                     if self.nccl_op is not None:
                         raise exc
                     else:
                         output_val = _wrap_exception(exc)
 
+                # [TODO] Change to `if output_val is not None`.
                 if not self.requires_nccl_write:
                     self.wrap_and_set_intermediate_future(
                         output_val, wrap_in_gpu_future=overlap_gpu_communication
                     )
 
+        # [TODO] Change to `if output_val is not None`.
         if not self.requires_nccl_write:
             if (
                 self.requires_nccl_read or self.requires_nccl_collective
