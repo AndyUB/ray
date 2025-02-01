@@ -146,8 +146,11 @@ class _CollectiveOperation(_NcclOperation):
         if not isinstance(send_buf, torch.Tensor):
             raise ValueError("Expected a torch tensor")
         communicator = self.get_communicator()
-        recv_buf = torch.empty_like(send_buf)
+        recv_buf = torch.ones_like(send_buf) * 100
+        print(f"send_buf: {send_buf}")
+        print(f"recv_buf: {recv_buf}")
         communicator.allreduce(send_buf, recv_buf, self._op)
+        print(f"recv_buf: {recv_buf}")
         return recv_buf
 
 
@@ -158,9 +161,7 @@ class CollectiveOutputNode(ClassMethodNode):
     def __init__(
         self,
         method_name: str,
-        method_args: Tuple[
-            DAGNode,
-        ],
+        method_args: Tuple[DAGNode,],
         method_kwargs: Dict[str, Any],
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],

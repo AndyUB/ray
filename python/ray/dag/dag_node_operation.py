@@ -563,9 +563,9 @@ def _generate_actor_to_execution_schedule(
     # A dictionary mapping an actor id to a list of candidate nodes. The list
     # is maintained as a priority queue, so the head of the queue, i.e.,
     # `candidates[0]`, is the "smallest" node.
-    actor_to_candidates: Dict[
-        "ray._raylet.ActorID", List[_DAGOperationGraphNode]
-    ] = defaultdict(list)
+    actor_to_candidates: Dict["ray._raylet.ActorID", List[_DAGOperationGraphNode]] = (
+        defaultdict(list)
+    )
 
     for node in task_idx_to_node.values():
         if node.in_degree == 0:
@@ -664,6 +664,12 @@ def _extract_execution_schedule(
     Extract _DAGNodeOperation from _DAGOperationGraphNode in the schedule
     and discard unnecessary information.
     """
+    print(
+        {
+            actor: [node.op.method_name for node in nodes]
+            for actor, nodes in actor_to_execution_schedule.items()
+        }
+    )
     return {
         actor: [node.op for node in nodes]
         for actor, nodes in actor_to_execution_schedule.items()

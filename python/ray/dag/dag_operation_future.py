@@ -78,8 +78,10 @@ class GPUFuture(DAGOperationFuture[Any]):
 
         if stream is None:
             stream = cp.cuda.get_current_stream()
+        print(f"GPUFuture::init {stream}")
 
         self._buf = buf
+        # print(f"GPUFuture::init {self._buf}")
         self._event = cp.cuda.Event()
         self._event.record(stream)
 
@@ -91,5 +93,7 @@ class GPUFuture(DAGOperationFuture[Any]):
         import cupy as cp
 
         current_stream = cp.cuda.get_current_stream()
+        print(f"GPUFuture::wait {current_stream}")
         current_stream.wait_event(self._event)
+        # print(f"GPUFuture::wait {self._buf}")
         return self._buf

@@ -594,6 +594,7 @@ class ExecutableTask:
             nccl_group = ChannelContext.get_current().communicators.get(nccl_group_id)
             assert nccl_group is not None
             self._send_stream = nccl_group.send_stream
+            print(f"Send stream: {self._send_stream}")
         if self.input_type_hints:
             for type_hint in self.input_type_hints:
                 if type_hint.requires_nccl():
@@ -608,11 +609,13 @@ class ExecutableTask:
                             "Compiled Graph task should use the same recv cuda stream."
                         )
                     self._recv_stream = nccl_group.recv_stream
+            print(f"Recv stream: {self._recv_stream}")
         if self.requires_nccl_collective:
             from ray.dag.collective_node import _CollectiveOperation
 
             assert isinstance(self.nccl_op, _CollectiveOperation)
             self._collective_stream = self.nccl_op.get_communicator().collective_stream
+            print(f"Collective stream: {self._collective_stream}")
 
     def wrap_and_set_intermediate_future(
         self, val: Any, wrap_in_gpu_future: bool
@@ -706,7 +709,6 @@ class ExecutableTask:
         #     if self.output_writer is not None:
         #         self.output_writer.write(output_val)
 
-
         if self.requires_nccl_read:
             stream = self._recv_stream
         elif self.requires_nccl_write:
@@ -734,16 +736,17 @@ class ExecutableTask:
                                 val = val.wait()
                                 if isinstance(val, RayTaskError):
                                     raise val.as_instanceof_cause()
+                                print(val)
                             input_data_ready.append(val)
                         input_values = []
                         for task_input in self.task_inputs:
                             input_values.append(task_input.resolve(input_data_ready))
                     except Exception as exc:
                         input_values = None
-                # overlap_gpu_communication should only be used in two places:
-                # - deciding how many streams to create
-                # - in wrap_and_set_intermediate_future: when deciding whether
-                #   to produce a GPUFuture or a ResolvedFuture
+                        # overlap_gpu_communication should only be used in two places:
+                        # - deciding how many streams to create
+                        # - in wrap_and_set_intermediate_future: when deciding whether
+                        #   to produce a GPUFuture or a ResolvedFuture
                         self.wrap_and_set_intermediate_future(
                             exc, wrap_in_gpu_future=overlap_gpu_communication
                         )
@@ -763,13 +766,13 @@ class ExecutableTask:
                     else:
                         method = getattr(class_handle, self.method_name)
 
-            # TODO: Pass the stream to use at ExecutableTask constructor
-            # instead of each task needing access to all streams.
+                    # TODO: Pass the stream to use at ExecutableTask constructor
+                    # instead of each task needing access to all streams.
                     try:
-                    # TODO: Wrap `method` here:
-                    # method_wrapper: (input_values, resolved_kwargs, Optional[Exception])
-                    # - throw Exception if non-null
-                    # - calls internal method: (*input_values, **resolved_kwargs)
+                        # TODO: Wrap `method` here:
+                        # method_wrapper: (input_values, resolved_kwargs, Optional[Exception])
+                        # - throw Exception if non-null
+                        # - calls internal method: (*input_values, **resolved_kwargs)
                         output_val = method(*input_values, **self.resolved_kwargs)
                     except RayChannelError:
                         return True
@@ -784,9 +787,9 @@ class ExecutableTask:
                             output_val, wrap_in_gpu_future=overlap_gpu_communication
                         )
 
-        # TODO:
-        # - Never wait for GPU output (it will get waited on in the downstream task).
-        # - Write to output_writer if it's not None.
+                # TODO:
+                # - Never wait for GPU output (it will get waited on in the downstream task).
+                # - Write to output_writer if it's not None.
                 if not self.requires_nccl_write:
                     if (
                         self.requires_nccl_read or self.requires_nccl_collective
@@ -954,9 +957,9 @@ class CompiledDAG:
         self.worker_task_refs: Dict["ray.actor.ActorHandle", "ray.ObjectRef"] = {}
         # Set of actors present in the DAG.
         self.actor_refs = set()
-        self.actor_to_tasks: Dict[
-            "ray.actor.ActorHandle", List["CompiledTask"]
-        ] = defaultdict(list)
+        self.actor_to_tasks: Dict["ray.actor.ActorHandle", List["CompiledTask"]] = (
+            defaultdict(list)
+        )
         # Mapping from actor handle to its GPU IDs.
         # This is used for type hint resolution for with_tensor_transport("auto").
         self.actor_to_gpu_ids: Dict["ray.actor.ActorHandle", List[str]] = {}
@@ -1435,9 +1438,9 @@ class CompiledDAG:
                 self._custom_communicator_p2p,
                 self._overlap_gpu_communication,
             )
-            custom_communicator_to_id[
-                self._custom_communicator_p2p
-            ] = self._communicator_id_p2p
+            custom_communicator_to_id[self._custom_communicator_p2p] = (
+                self._communicator_id_p2p
+            )
             actors = frozenset(nccl_actors_p2p)
             actors_to_communicator_id[actors] = self._communicator_id_p2p
 
