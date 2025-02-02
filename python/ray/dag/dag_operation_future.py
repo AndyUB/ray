@@ -75,15 +75,24 @@ class GPUFuture(DAGOperationFuture[Any]):
                 on when the future is resolved. If None, the current stream is used.
         """
         import cupy as cp
+        import os
 
+        visible_devices = os.getenv("CUDA_VISIBLE_DEVICES", "").split(",")
+        # print(f"GPUFuture::init device={cp.cuda.get_device_id()}")
+        # print(f"GPUFuture::init visible_devices={visible_devices}")
+        print(
+            f"GPUFuture::init global_device={visible_devices[cp.cuda.get_device_id()]}"
+        )
         if stream is None:
             stream = cp.cuda.get_current_stream()
-        print(f"GPUFuture::init {stream}")
+        # print(f"GPUFuture::init {stream}")
 
         self._buf = buf
         # print(f"GPUFuture::init {self._buf}")
         self._event = cp.cuda.Event()
         self._event.record(stream)
+        self._stream = stream
+        print(self._event)
 
     def wait(self) -> Any:
         """
@@ -91,9 +100,18 @@ class GPUFuture(DAGOperationFuture[Any]):
         the GPU operation. This operation does not block CPU.
         """
         import cupy as cp
+        import os
 
+        visible_devices = os.getenv("CUDA_VISIBLE_DEVICES", "").split(",")
+        # print(f"GPUFuture::init visible_devices={visible_devices}")
+        # print(f"GPUFuture::wait device={cp.cuda.get_device_id()}")
+        print(
+            f"GPUFuture::wait global_device={visible_devices[cp.cuda.get_device_id()]}"
+        )
         current_stream = cp.cuda.get_current_stream()
-        print(f"GPUFuture::wait {current_stream}")
-        current_stream.wait_event(self._event)
+        print(f"GPUFuture::wait {current_stream} {self._stream}")
+        current_stream.wait_event(self._event)  # returns immediately
+        # self._event.synchronize()
+        # current_stream.synchronize()  # does not work
         # print(f"GPUFuture::wait {self._buf}")
         return self._buf

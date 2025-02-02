@@ -70,7 +70,7 @@ class TorchTensorWorker:
     def recv(self, tensor):
         # Check that tensor got loaded to the correct device.
         assert tensor.device == self.device
-        return (tensor[0].item(), tensor.shape, tensor.dtype)
+        return (tensor[-1].item(), tensor.shape, tensor.dtype)
 
     def recv_and_matmul(self, two_d_tensor):
         """
@@ -447,7 +447,7 @@ def test_torch_tensor_nccl_overlap_p2p_and_collective(
     dtype = torch.float16
     collective_shape = (100000000,)
     compute_shape = (100000,)
-    send_shape = (100000000,)
+    send_shape = (10000000,)
     with InputNode() as inp:
         collectives = [
             worker.send.bind(collective_shape, dtype, inp) for worker in workers
@@ -472,6 +472,7 @@ def test_torch_tensor_nccl_overlap_p2p_and_collective(
     compiled_dag = dag.experimental_compile(
         _overlap_gpu_communication=overlap_gpu_communication
     )
+    print(compiled_dag.visualize(format="ascii"))
 
     elapses = []
     start = time.monotonic()
