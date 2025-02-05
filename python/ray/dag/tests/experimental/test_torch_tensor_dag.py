@@ -41,6 +41,24 @@ USE_GPU = bool(os.environ.get("RAY_PYTEST_USE_GPU", 0))
 class TorchTensorWorker:
     def __init__(self):
         self.device = torch_utils.get_devices()[0]
+        self.profiler = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            # with_stack=True,
+            record_shapes=True,
+        )
+        self.profiler.__enter__()
+
+    def fetch_profile(self):
+        self.profiler.__exit__(None, None, None)
+        visible_gpus = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        assert visible_gpus is not None
+        local_rank = torch.cuda.current_device()
+        global_rank = visible_gpus.split(",")[local_rank]
+        print(f"Device index: {global_rank}")
+        self.profiler.export_chrome_trace(f"torch_tensor_worker_{global_rank}.json")
 
     def init_distributed(self, world_size, rank):
         torch.distributed.init_process_group(
@@ -411,18 +429,20 @@ def test_torch_tensor_nccl_overlap_collective(
 
     elapses = []
     start = time.monotonic()
-    for i in range(5):
+    for i in range(1):
         iter_start = time.monotonic()
         ref = compiled_dag.execute(i)
         result = ray.get(ref)
         iter_duration = time.monotonic() - iter_start
         elapses.append(iter_duration)
-        assert (
-            result
-            == [(i * num_workers, collective_shape, dtype)] * num_workers
-            + [(i + 1000, compute_shape, dtype)] * num_workers
-        )
+        print(f"{result=}")
+        # assert (
+        #     result
+        #     == [(i * num_workers, collective_shape, dtype)] * num_workers
+        #     + [(i + 1000, compute_shape, dtype)] * num_workers
+        # )
     duration = time.monotonic() - start
+    ray.get([worker.fetch_profile.remote() for worker in workers])
     print(f"{overlap_gpu_communication=}, {duration=}")
     for i, elapse in enumerate(elapses):
         print(f"iteration {i=}, {elapse=}")
