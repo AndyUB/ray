@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Union, Tuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import torch
+    import cupy as cp
 
 import ray
 from ray.dag import (
@@ -136,17 +137,42 @@ class _CollectiveOperation(_NcclOperation):
             raise ValueError("Expected a NCCL group")
         return communicator
 
-    def execute(self, send_buf: "torch.Tensor") -> "torch.Tensor":
+    def execute(self, send_buf: "torch.Tensor") -> "cp.ndarray":
         """
         Call the collective operation on the input tensor. An output tensor is
         allocated and returned.
         """
         import torch
+        import cupy as cp
 
         if not isinstance(send_buf, torch.Tensor):
             raise ValueError("Expected a torch tensor")
+
+        def torch_to_cupy_dtype(torch_dtype: torch.dtype) -> cp.dtype:
+            """
+            Maps PyTorch dtypes to their equivalent CuPy dtypes.
+            """
+            import torch
+            import cupy as cp
+
+            dtype_map = {
+                torch.float16: cp.float16,
+                torch.float32: cp.float32,
+                torch.float64: cp.float64,
+                torch.int8: cp.int8,
+                torch.int16: cp.int16,
+                torch.int32: cp.int32,
+                torch.int64: cp.int64,
+                torch.uint8: cp.uint8,
+                torch.bool: cp.bool_,
+            }
+            return dtype_map.get(torch_dtype, None)
+
         communicator = self.get_communicator()
-        recv_buf = torch.empty_like(send_buf)
+        cp_dtype = torch_to_cupy_dtype(send_buf.dtype)
+        if cp_dtype is None:
+            raise ValueError(f"Unsupported dtype: {send_buf.dtype}")
+        recv_buf = cp.empty(send_buf.shape, dtype=cp_dtype)
         communicator.allreduce(send_buf, recv_buf, self._op)
         return recv_buf
 
@@ -158,9 +184,7 @@ class CollectiveOutputNode(ClassMethodNode):
     def __init__(
         self,
         method_name: str,
-        method_args: Tuple[
-            DAGNode,
-        ],
+        method_args: Tuple[DAGNode,],
         method_kwargs: Dict[str, Any],
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],

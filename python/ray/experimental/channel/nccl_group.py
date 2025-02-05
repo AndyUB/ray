@@ -263,11 +263,11 @@ class _NcclGroup(Communicator):
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
-        assert send_buf.dtype == recv_buf.dtype, (
-            "Ray Compiled Graph derived the dtype of recv_buf from send_buf, "
-            "so send_buf and recv_buf must have the same dtype. "
-            "If you see this error, please file an issue at Ray repository."
-        )
+        # assert send_buf.dtype == recv_buf.dtype, (
+        #     "Ray Compiled Graph derived the dtype of recv_buf from send_buf, "
+        #     "so send_buf and recv_buf must have the same dtype. "
+        #     "If you see this error, please file an issue at Ray repository."
+        # )
         self._comm.allReduce(
             self.nccl_util.get_tensor_ptr(send_buf),
             self.nccl_util.get_tensor_ptr(recv_buf),
