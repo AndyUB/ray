@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Set
+from typing import List, Set, Any
 
 
 class _NcclOperation(ABC):
@@ -8,7 +8,8 @@ class _NcclOperation(ABC):
     """
 
     def __init__(self):
-        # Task indices in a compiled DAG.
+        # Task indices in a compiled DAG. The indices are appended
+        # in topological order if there are dependencies among the tasks.
         self.task_idxs: List[int] = []
         # Indices of tasks that are ready with a zero in-degree.
         self.ready_task_idxs: Set[int] = set()
@@ -23,7 +24,7 @@ class _NcclOperation(ABC):
         return len(self.ready_task_idxs) == len(self.task_idxs)
 
     @abstractmethod
-    def execute(self, *args, **kwargs) -> None:
+    def execute(self, *args, **kwargs) -> Any:
         """
         Execute the NCCL operation in `ExecutableTask`.
         """

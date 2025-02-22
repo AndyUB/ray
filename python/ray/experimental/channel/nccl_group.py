@@ -4,10 +4,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import ray
 from ray.exceptions import RayChannelError
-from ray.experimental.channel.gpu_communicator import (
-    GPUCommunicator,
-    TorchTensorAllocator,
-)
+from ray.experimental.channel.communicator import Communicator, TorchTensorAllocator
 from ray.experimental.util.types import ReduceOp
 
 if TYPE_CHECKING:
@@ -21,10 +18,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _NcclGroup(GPUCommunicator):
+class _NcclGroup(Communicator):
     """
     Represents an actor's NCCL communicator. This is the default NCCL communicator
-    to be used in aDAG if a custom communicator is not provided.
+    to be used in Compiled Graph if a custom communicator is not provided.
 
     This class is not thread-safe.
     """
@@ -70,7 +67,7 @@ class _NcclGroup(GPUCommunicator):
                 specified, then this must be specified too.
             use_communication_streams: Whether to use dedicated send and recv
                 streams for communication. If True, communication and computation
-                can be overlapped to improve perfomrance.
+                can be overlapped to improve performance.
         """
         self._world_size = world_size
         self._rank: Optional[int] = rank
@@ -95,10 +92,6 @@ class _NcclGroup(GPUCommunicator):
             # Driver does not have a rank.
             self._comm = None
 
-        self._cuda_stream: Optional["cp.cuda.ExternalStream"] = None
-        self._send_stream: Optional["cp.cuda.ExternalStream"] = None
-        self._recv_stream: Optional["cp.cuda.ExternalStream"] = None
-        self._coll_stream: Optional["cp.cuda.ExternalStream"] = None
         if cuda_stream is not None:
             assert rank is not None, "NCCL actor has no rank assigned"
 
@@ -108,9 +101,6 @@ class _NcclGroup(GPUCommunicator):
 
             # TODO(swang): Allow default device to be overridden.
             device = torch_utils.get_devices()[0]
-            self._cuda_stream = cp.cuda.ExternalStream(
-                cuda_stream, device_id=device.index
-            )
 
             if use_communication_streams:
                 import torch
@@ -125,9 +115,10 @@ class _NcclGroup(GPUCommunicator):
                     torch.cuda.Stream().cuda_stream, device_id=device.index
                 )
             else:
-                self._send_stream = self._cuda_stream
-                self._recv_stream = self._cuda_stream
-                self._coll_stream = self._cuda_stream
+                stream = cp.cuda.ExternalStream(cuda_stream, device_id=device.index)
+                self._send_stream = stream
+                self._recv_stream = stream
+                self._coll_stream = stream
 
         self._closed = False
 
@@ -180,6 +171,8 @@ class _NcclGroup(GPUCommunicator):
                 actor's default device.
             peer_rank: The rank of the actor to send to.
         """
+        import torch
+
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
@@ -190,6 +183,10 @@ class _NcclGroup(GPUCommunicator):
             # To avoid that, we synchronize on the send stream.
             # TODO(rui): find a better approach
             self._send_stream.synchronize()
+
+        # Record buf is used by the send stream so that its memory is not
+        # deallocated before the send operation finishes.
+        buf.record_stream(torch.cuda.ExternalStream(self._send_stream.ptr))
 
         # TODO(swang): Handle send/recv async NCCL errors such as network
         # failures.
@@ -252,7 +249,7 @@ class _NcclGroup(GPUCommunicator):
             # need to synchronize here and check that the channel is still open to
             # ensure that the receive buffer is valid.
             # TODO(swang): Avoid CUDA synchronization.
-            self._cuda_stream.synchronize()
+            self._recv_stream.synchronize()
 
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
@@ -264,8 +261,20 @@ class _NcclGroup(GPUCommunicator):
         recv_buf: "torch.Tensor",
         op: ReduceOp = ReduceOp.SUM,
     ):
+        import torch
+
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
+
+        assert send_buf.dtype == recv_buf.dtype, (
+            "Ray Compiled Graph derived the dtype of recv_buf from send_buf, "
+            "so send_buf and recv_buf must have the same dtype. "
+            "If you see this error, please file an issue at Ray repository."
+        )
+
+        # Record send_buf is used by the collective stream so that its memory is
+        # not deallocated before the allreduce operation finishes.
+        send_buf.record_stream(torch.cuda.ExternalStream(self._coll_stream.ptr))
 
         self._comm.allReduce(
             self.nccl_util.get_tensor_ptr(send_buf),
@@ -281,10 +290,14 @@ class _NcclGroup(GPUCommunicator):
         # ensure that the receive buffer is valid.
         # TODO(swang): Avoid CUDA synchronization.
         if not self._use_communication_streams:
-            self._cuda_stream.synchronize()
+            self._coll_stream.synchronize()
 
         if self._closed:
-            raise RayChannelError("NCCL group has been destroyed.")
+            raise RayChannelError(
+                "NCCL group has been destroyed during allreduce operation. "
+                "There may be a dtype mismatch between input tensors from "
+                "different ranks."
+            )
 
     @property
     def recv_stream(self) -> Optional["cp.cuda.ExternalStream"]:
@@ -317,3 +330,6 @@ class _NcclGroup(GPUCommunicator):
             # flag is True when they exit from the abort.
             self._comm.abort()
             self._comm.destroy()
+
+    def get_transport_name(self) -> str:
+        return "nccl"

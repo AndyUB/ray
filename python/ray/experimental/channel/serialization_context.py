@@ -1,8 +1,13 @@
+import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple, Union
 
 if TYPE_CHECKING:
     import numpy as np
     import torch
+    from ray.dag.dag_operation_future import GPUFuture
+
+
+_TORCH_WARNING_FILTER_ACTIVATE = True
 
 
 class _SerializationContext:
@@ -27,6 +32,9 @@ class _SerializationContext:
         # The number of readers for each channel. When the number of readers
         # reaches 0, remove the data from the buffer.
         self.channel_id_to_num_readers: Dict[str, int] = {}
+        # Caching GPU futures ensures CUDA events inside the futures are destroyed
+        # controllably instead of by garbage collection.
+        self.gpu_futures: Dict[int, "GPUFuture"] = {}
 
     def set_data(self, channel_id: str, value: Any, num_readers: int) -> None:
         assert num_readers > 0, "num_readers must be greater than 0."
@@ -62,6 +70,29 @@ class _SerializationContext:
         self.intra_process_channel_buffers.pop(channel_id, None)
         self.channel_id_to_num_readers.pop(channel_id, None)
 
+    def set_gpu_future(self, fut_id: int, fut: "GPUFuture") -> None:
+        """
+        Cache the GPU future.
+
+        Args:
+            fut_id: ID of the GPU future.
+            fut: GPU future to be cached.
+        """
+        assert (
+            fut_id not in self.gpu_futures
+        ), f"GPUFuture with id={fut_id} is already cached."
+        self.gpu_futures[fut_id] = fut
+
+    def pop_gpu_future(self, fut_id: int) -> None:
+        """
+        Remove the cached GPU future and destroy the CUDA event it contains.
+
+        Args:
+            fut_id: ID of the GPU future.
+        """
+        if fut_id in self.gpu_futures:
+            self.gpu_futures.pop(fut_id).destroy_event()
+
     def set_use_external_transport(self, use_external_transport: bool) -> None:
         self._use_external_transport = use_external_transport
 
@@ -93,7 +124,11 @@ class _SerializationContext:
 
         return self.serialize_to_numpy(tensor)
 
-    def serialize_to_numpy(self, tensor: "torch.Tensor") -> "np.ndarray":
+    def serialize_to_numpy(
+        self, tensor: "torch.Tensor"
+    ) -> Tuple["np.ndarray", "torch.dtype"]:
+        import torch
+
         # Transfer through Ray's shared memory store for now.
         # TODO(swang): This requires two copies, one to transfer from GPU to
         # CPU and another from CPU to shared memory. Ideally we should elide
@@ -102,7 +137,10 @@ class _SerializationContext:
         if tensor.device.type == "cuda":
             tensor = tensor.to("cpu")
 
-        return tensor.numpy()
+        # Numpy does not have an equivalent dtype for all torch dtypes, so
+        # instead of casting directly to numpy, we first use a view with a
+        # common dtype and then view as numpy array.
+        return (tensor.view(torch.uint8).numpy(), tensor.dtype)
 
     def deserialize_tensor(self, val: Union["np.ndarray", int]):
         # Found a placeholder for a tensor that was serialized via NCCL.
@@ -115,27 +153,49 @@ class _SerializationContext:
 
         return self.deserialize_from_numpy(val)
 
-    def deserialize_from_numpy(self, np_array: "np.ndarray"):
+    def deserialize_from_numpy(
+        self, np_array_dtype: Tuple["np.ndarray", "torch.dtype"]
+    ):
         import torch
 
         from ray.experimental.channel import ChannelContext
 
         ctx = ChannelContext.get_current()
 
+        np_array, dtype = np_array_dtype
+
         # TODO(swang): Support local P2P transfers if available.
         # If there is a GPU assigned to this worker, move it there.
         if ctx.torch_device is not None and ctx.torch_device.type == "cuda":
-            # Use zero-copy from_numpy() because we are going to copy to GPU
-            # anyway.
-            # TODO: Pin the np_array memory to reduce data movement time.
-            # TODO: Set np_array.flags.writeable=True to avoid the PyTorch
-            # warning about not owning the underlying memory. This is safe to
-            # do as long as all other readers are also copying the data to a
-            # GPU.
-            cpu_tensor = torch.from_numpy(np_array)
-            return cpu_tensor.to(device=ctx.torch_device)
+
+            def convert_numpy_to_tensor(np_array, ctx):
+                # It does zero-copy convert np_array inside shared memroy to
+                # a tensor. Since we move data to GPU immediately, it is safe.
+                cpu_tensor = torch.from_numpy(np_array).view(dtype)
+                return cpu_tensor.to(device=ctx.torch_device)
+
+            global _TORCH_WARNING_FILTER_ACTIVATE
+            # filtering warning messages would be the bottleneck for
+            # deserializing torch tensors. Since the warning only prompts once,
+            # we would only deal with it for the first time.
+            if _TORCH_WARNING_FILTER_ACTIVATE:
+                with warnings.catch_warnings():
+                    # Since np_array.is_writable is False (it is set by Ray),
+                    # this raises a warning. Suppress it.
+                    warnings.filterwarnings(
+                        "ignore",
+                        category=UserWarning,
+                        message="The given NumPy array is not writable",
+                    )
+                    # gpu_tensor = convert_numpy_to_tensor(np_array, ctx)
+                    gpu_tensor = convert_numpy_to_tensor(np_array, ctx)
+                _TORCH_WARNING_FILTER_ACTIVATE = False
+            else:
+                gpu_tensor = convert_numpy_to_tensor(np_array, ctx)
+
+            return gpu_tensor
 
         # TODO(swang): Use zero-copy from_numpy() if np_array.flags.writeable
         # is True. This is safe to set when deserializing np_array if the
         # upstream task has num_readers=1.
-        return torch.tensor(np_array, device=ctx.torch_device)
+        return torch.tensor(np_array, device=ctx.torch_device).view(dtype)
