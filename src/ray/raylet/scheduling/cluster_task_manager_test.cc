@@ -18,6 +18,11 @@
 
 #include <memory>
 #include <string>
+#include <list>
+#include <utility>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -63,6 +68,16 @@ class MockWorkerPool : public WorkerPoolInterface {
       bool filter_dead_workers, bool filter_io_workers) const {
     RAY_CHECK(false) << "Not used.";
     return {};
+  }
+
+  std::shared_ptr<WorkerInterface> GetRegisteredWorker(const WorkerID &worker_id) const {
+    RAY_CHECK(false) << "Not used.";
+    return nullptr;
+  };
+
+  std::shared_ptr<WorkerInterface> GetRegisteredDriver(const WorkerID &worker_id) const {
+    RAY_CHECK(false) << "Not used.";
+    return nullptr;
   }
 
   void TriggerCallbacksWithNotOKStatus(
@@ -170,6 +185,7 @@ RayTask CreateTask(
                                  "",
                                  0,
                                  TaskID::Nil(),
+                                 "",
                                  runtime_env_info);
 
   if (!args.empty()) {
@@ -185,12 +201,12 @@ RayTask CreateTask(
 
   spec_builder.SetNormalTaskSpec(0, false, "", scheduling_strategy, ActorID::Nil());
 
-  return RayTask(spec_builder.Build());
+  return RayTask(std::move(spec_builder).ConsumeAndBuild());
 }
 
 class MockTaskDependencyManager : public TaskDependencyManagerInterface {
  public:
-  MockTaskDependencyManager(std::unordered_set<ObjectID> &missing_objects)
+  explicit MockTaskDependencyManager(std::unordered_set<ObjectID> &missing_objects)
       : missing_objects_(missing_objects) {}
 
   bool RequestTaskDependencies(const TaskID &task_id,
@@ -246,9 +262,9 @@ class ClusterTaskManagerTest : public ::testing::Test {
             id_.Binary(), num_cpus_at_head, num_gpus_at_head, *gcs_client_)),
         is_owner_alive_(true),
         dependency_manager_(missing_objects_),
-        local_task_manager_(std::make_shared<LocalTaskManager>(
+        local_task_manager_(std::make_unique<LocalTaskManager>(
             id_,
-            scheduler_,
+            *scheduler_,
             dependency_manager_, /* is_owner_alive= */
             [this](const WorkerID &worker_id, const NodeID &node_id) {
               return is_owner_alive_;
@@ -279,7 +295,7 @@ class ClusterTaskManagerTest : public ::testing::Test {
             /*get_time=*/[this]() { return current_time_ms_; })),
         task_manager_(
             id_,
-            scheduler_,
+            *scheduler_,
             /* get_node_info= */
             [this](const NodeID &node_id) -> const rpc::GcsNodeInfo * {
               node_info_calls_++;
@@ -290,7 +306,7 @@ class ClusterTaskManagerTest : public ::testing::Test {
             },
             /* announce_infeasible_task= */
             [this](const RayTask &task) { announce_infeasible_task_calls_++; },
-            local_task_manager_,
+            *local_task_manager_,
             /*get_time=*/[this]() { return current_time_ms_; }) {
     RayConfig::instance().initialize("{\"scheduler_top_k_absolute\": 1}");
   }
@@ -385,7 +401,7 @@ class ClusterTaskManagerTest : public ::testing::Test {
   int64_t current_time_ms_ = 0;
 
   MockTaskDependencyManager dependency_manager_;
-  std::shared_ptr<LocalTaskManager> local_task_manager_;
+  std::unique_ptr<LocalTaskManager> local_task_manager_;
   ClusterTaskManager task_manager_;
 };
 
@@ -541,10 +557,8 @@ TEST_F(ClusterTaskManagerTest, DispatchQueueNonBlockingTest) {
   pool_.TriggerCallbacks();
 
   // Push a worker that can only run task A.
-  const WorkerCacheKey env_A = {serialized_runtime_env_A, false, false, false};
-  const int runtime_env_hash_A = env_A.IntHash();
-  std::shared_ptr<MockWorker> worker_A =
-      std::make_shared<MockWorker>(WorkerID::FromRandom(), 1234, runtime_env_hash_A);
+  std::shared_ptr<MockWorker> worker_A = std::make_shared<MockWorker>(
+      WorkerID::FromRandom(), 1234, CalculateRuntimeEnvHash(serialized_runtime_env_A));
   pool_.PushWorker(std::static_pointer_cast<WorkerInterface>(worker_A));
   pool_.TriggerCallbacks();
 
@@ -1820,7 +1834,51 @@ TEST_F(ClusterTaskManagerTest, FeasibleToNonFeasible) {
             task1.GetTaskSpecification().TaskId());
 }
 
-TEST_F(ClusterTaskManagerTestWithGPUsAtHead, RleaseAndReturnWorkerCpuResources) {
+TEST_F(ClusterTaskManagerTest, NegativePlacementGroupCpuResources) {
+  // Add PG CPU resources.
+  scheduler_->GetLocalResourceManager().AddLocalResourceInstances(
+      scheduling::ResourceID("CPU_group_aaa"), std::vector<FixedPoint>{FixedPoint(2)});
+  scheduler_->GetLocalResourceManager().AddLocalResourceInstances(
+      scheduling::ResourceID("CPU_group_0_aaa"), std::vector<FixedPoint>{FixedPoint(1)});
+  scheduler_->GetLocalResourceManager().AddLocalResourceInstances(
+      scheduling::ResourceID("CPU_group_1_aaa"), std::vector<FixedPoint>{FixedPoint(1)});
+
+  const NodeResources &node_resources =
+      scheduler_->GetClusterResourceManager().GetNodeResources(
+          scheduling::NodeID(id_.Binary()));
+
+  auto worker1 = std::make_shared<MockWorker>(WorkerID::FromRandom(), 1234);
+  auto allocated_instances = std::make_shared<TaskResourceInstances>();
+  ASSERT_TRUE(scheduler_->GetLocalResourceManager().AllocateLocalTaskResources(
+      {{"CPU_group_aaa", 1.}, {"CPU_group_0_aaa", 1.}}, allocated_instances));
+  worker1->SetAllocatedInstances(allocated_instances);
+  // worker1 calls ray.get() and release the CPU resource
+  ASSERT_TRUE(local_task_manager_->ReleaseCpuResourcesFromBlockedWorker(worker1));
+
+  // the released CPU resource is acquired by worker2
+  auto worker2 = std::make_shared<MockWorker>(WorkerID::FromRandom(), 5678);
+  allocated_instances = std::make_shared<TaskResourceInstances>();
+  ASSERT_TRUE(scheduler_->GetLocalResourceManager().AllocateLocalTaskResources(
+      {{"CPU_group_aaa", 1.}, {"CPU_group_0_aaa", 1.}}, allocated_instances));
+  worker2->SetAllocatedInstances(allocated_instances);
+
+  // ray.get() returns and worker1 acquires the CPU resource again
+  ASSERT_TRUE(local_task_manager_->ReturnCpuResourcesToUnblockedWorker(worker1));
+  ASSERT_EQ(node_resources.available.Get(scheduling::ResourceID("CPU_group_aaa")), 0);
+  ASSERT_EQ(node_resources.available.Get(scheduling::ResourceID("CPU_group_0_aaa")), -1);
+  ASSERT_EQ(node_resources.available.Get(scheduling::ResourceID("CPU_group_1_aaa")), 1);
+
+  auto worker3 = std::make_shared<MockWorker>(WorkerID::FromRandom(), 7678);
+  allocated_instances = std::make_shared<TaskResourceInstances>();
+  ASSERT_TRUE(scheduler_->GetLocalResourceManager().AllocateLocalTaskResources(
+      {{"CPU_group_aaa", 1.}, {"CPU_group_1_aaa", 1.}}, allocated_instances));
+  worker3->SetAllocatedInstances(allocated_instances);
+  ASSERT_EQ(node_resources.available.Get(scheduling::ResourceID("CPU_group_aaa")), -1);
+  ASSERT_EQ(node_resources.available.Get(scheduling::ResourceID("CPU_group_0_aaa")), -1);
+  ASSERT_EQ(node_resources.available.Get(scheduling::ResourceID("CPU_group_1_aaa")), 0);
+}
+
+TEST_F(ClusterTaskManagerTestWithGPUsAtHead, ReleaseAndReturnWorkerCpuResources) {
   // Add PG CPU and GPU resources.
   scheduler_->GetLocalResourceManager().AddLocalResourceInstances(
       scheduling::ResourceID("CPU_group_aaa"), std::vector<FixedPoint>{FixedPoint(1)});

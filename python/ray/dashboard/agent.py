@@ -7,7 +7,6 @@ import os
 import pathlib
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
 
 import ray
 import ray._private.ray_constants as ray_constants
@@ -29,6 +28,7 @@ class DashboardAgent:
         node_ip_address,
         dashboard_agent_port,
         gcs_address,
+        cluster_id_hex,
         minimal,
         metrics_export_port=None,
         node_manager_port=None,
@@ -48,13 +48,10 @@ class DashboardAgent:
         # Public attributes are accessible for all agent modules.
         self.ip = node_ip_address
         self.minimal = minimal
-        self.thread_pool_executor = ThreadPoolExecutor(
-            max_workers=dashboard_consts.RAY_AGENT_THREAD_POOL_MAX_WORKERS,
-            thread_name_prefix="dashboard_agent_tpe",
-        )
 
         assert gcs_address is not None
         self.gcs_address = gcs_address
+        self.cluster_id_hex = cluster_id_hex
 
         self.temp_dir = temp_dir
         self.session_dir = session_dir
@@ -80,6 +77,7 @@ class DashboardAgent:
         self.gcs_aio_client = GcsAioClient(
             address=self.gcs_address,
             nums_reconnect_retry=ray._config.gcs_rpc_server_reconnect_timeout_s(),
+            cluster_id=self.cluster_id_hex,
         )
 
         if not self.minimal:
@@ -90,11 +88,7 @@ class DashboardAgent:
         from ray.dashboard.http_server_agent import HttpServerAgent
 
         self.aio_publisher = GcsAioPublisher(address=self.gcs_address)
-
-        try:
-            from grpc import aio as aiogrpc
-        except ImportError:
-            from grpc.experimental import aio as aiogrpc
+        from grpc import aio as aiogrpc
 
         # We would want to suppress deprecating warnings from aiogrpc library
         # with the usage of asyncio.get_event_loop() in python version >=3.10
@@ -198,17 +192,26 @@ class DashboardAgent:
                     "disable the http service."
                 )
 
-        # Write the dashboard agent port to kv.
-        # TODO: Use async version if performance is an issue
+        # Writes agent address to kv.
+        # DASHBOARD_AGENT_ADDR_NODE_ID_PREFIX: <node_id> -> (ip, http_port, grpc_port)
+        # DASHBOARD_AGENT_ADDR_IP_PREFIX: <ip> -> (node_id, http_port, grpc_port)
         # -1 should indicate that http server is not started.
         http_port = -1 if not self.http_server else self.http_server.http_port
         grpc_port = -1 if not self.server else self.grpc_port
-        await self.gcs_aio_client.internal_kv_put(
-            f"{dashboard_consts.DASHBOARD_AGENT_PORT_PREFIX}{self.node_id}".encode(),
-            json.dumps([http_port, grpc_port]).encode(),
+        put_by_node_id = self.gcs_aio_client.internal_kv_put(
+            f"{dashboard_consts.DASHBOARD_AGENT_ADDR_NODE_ID_PREFIX}{self.node_id}".encode(),
+            json.dumps([self.ip, http_port, grpc_port]).encode(),
             True,
             namespace=ray_constants.KV_NAMESPACE_DASHBOARD,
         )
+        put_by_ip = self.gcs_aio_client.internal_kv_put(
+            f"{dashboard_consts.DASHBOARD_AGENT_ADDR_IP_PREFIX}{self.ip}".encode(),
+            json.dumps([self.node_id, http_port, grpc_port]).encode(),
+            True,
+            namespace=ray_constants.KV_NAMESPACE_DASHBOARD,
+        )
+
+        await asyncio.gather(put_by_node_id, put_by_ip)
 
         tasks = [m.run(self.server) for m in modules]
 
@@ -258,6 +261,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--gcs-address", required=True, type=str, help="The address (ip:port) of GCS."
+    )
+    parser.add_argument(
+        "--cluster-id-hex",
+        required=True,
+        type=str,
+        help="The cluster id in hex.",
     )
     parser.add_argument(
         "--metrics-export-port",
@@ -416,6 +425,7 @@ if __name__ == "__main__":
             args.node_ip_address,
             args.dashboard_agent_port,
             args.gcs_address,
+            args.cluster_id_hex,
             args.minimal,
             temp_dir=args.temp_dir,
             session_dir=args.session_dir,

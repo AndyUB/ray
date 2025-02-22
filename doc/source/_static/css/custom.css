@@ -398,6 +398,11 @@ table.autosummary tr > td:first-child > p > a > code > span {
 }
 
 /* Hide the RTD version switcher since we are using PyData theme one */
-#rtd-footer-container {
-  display: none;
+readthedocs-flyout {
+  display: none !important;
+}
+
+/* Styling the experimental Anyscale upsell CTA */
+.anyscale-cta {
+  margin-bottom: 16px;
 }

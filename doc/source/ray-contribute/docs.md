@@ -161,8 +161,7 @@ comes down to _two types_ of documents:
   [key concepts](https://github.com/ray-project/ray/blob/master/doc/source/tune/key-concepts.rst) or
   [API documentation](https://github.com/ray-project/ray/blob/master/doc/source/tune/api/api.rst).
 - Notebooks, written in `.ipynb` format. All Tune examples are written as notebooks. These notebooks render in
-  the browser like `.md` or `.rst` files, but have the added benefit of adding launch buttons to the top of the
-  document, so that users can run the code themselves in either Binder or Google Colab.
+  the browser like `.md` or `.rst` files, but have the added benefit that users can easily run the code themselves.
 
 ## Fixing typos and improving explanations
 
@@ -257,7 +256,7 @@ top of this page to get the `.ipynb` file) and start modifying it.
 All the example notebooks in Ray Tune get automatically tested by our CI system, provided you place them in the
 [`examples` folder](https://github.com/ray-project/ray/tree/master/doc/source/tune/examples).
 If you have questions about how to test your notebook when contributing to other Ray sub-projects, please make
-sure to ask a question in [the Ray community Slack](https://forms.gle/9TSdDYUgxYs8SA9e8) or directly on GitHub,
+sure to ask a question in [the Ray community Slack](https://www.ray.io/join-slack) or directly on GitHub,
 when opening your pull request.
 
 To work off of an existing example, you could also have a look at the
@@ -343,6 +342,21 @@ not want to do to contribute a piece of documentation.
 Apart from `hide-cell`, you also have `hide-input` and `hide-output` tags that hide the input and output of a cell.
 Also, if you need code that gets executed in the notebook, but you don't want to show it in the documentation,
 you can use the `remove-cell`, `remove-input`, and `remove-output` tags in the same way.
+
+### Reference section labels
+
+[Reference sections labels](https://jupyterbook.org/en/stable/content/references.html#reference-section-labels) are a way to link to specific parts of the documentation from within a notebook. Creating one inside a markdown cell is simple:
+
+```markdown
+(my-label)=
+# The thing to label
+```
+
+Then, you can link it in .rst files with the following syntax:
+
+```rst
+See {ref}`the thing that I labeled <my-label>` for more information.
+```
 
 ### Testing notebooks
 
@@ -500,7 +514,7 @@ If you run into a problem building the docs, following these steps can help isol
 2. **Check your environment.** Use `pip list` to check the installed dependencies. Compare them to `doc/requirements-doc.txt`. The documentation build system doesn't have the same dependency requirements as Ray. You don't need to run ML models or execute code on distributed systems in order to build the docs. In fact, it's best to use a completely separate docs build environment from the environment you use to run Ray to avoid dependency conflicts.  When installing requirements, do `pip install -r doc/requirements-doc.txt`. Don't use `-U` because you don't want to upgrade any dependencies during the installation.
 3. **Ensure a modern version of Python.** The docs build system doesn't keep the same dependency and Python version requirements as Ray. Use a modern version of Python when building docs. Newer versions of Python can be substantially faster than preceding versions. Consult <https://endoflife.date/python> for the latest version support information.
 4. **Enable breakpoints in Sphinx**. Add -P to the `SPHINXOPTS` in `doc/Makefile` to tell `sphinx` to stop when it encounters a breakpoint, and remove `-j auto` to disable parallel builds. Now you can put breakpoints in the modules you're trying to import, or in `sphinx` code itself, which can help isolate build stubborn build issues.
-5. **[Incremental build] Side navigation bar doesn't show new pages** New page should always show up in the side navigation bar when you are on Index page. Because of incremental build, the build system would skip rebuilding a lot of pages, thus the side navigation bar isn't updated on those. If you want to build doc with correct side navigation bar on all pages, consider using `make develop`.
+5. **[Incremental build] Side navigation bar doesn't reflect new pages** If you are adding new pages, they should always show up in the side navigation bar on index pages. However, incremental builds with `make local` skips rebuilding many other pages, so Sphinx doesn't update the side navigation bar on those pages. To build docs with correct side navigation bar on all pages, consider using `make develop`.
 
 ## Where to go from here?
 
