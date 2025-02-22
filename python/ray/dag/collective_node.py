@@ -11,7 +11,6 @@ from ray.dag import (
 from ray.dag.constants import COLLECTIVE_OPERATION_KEY
 from ray.dag.nccl_operation import _NcclOperation
 from ray.experimental.channel import ChannelContext
-from ray.experimental.channel.torch_tensor_nccl_channel import _init_communicator
 from ray.experimental.channel.torch_tensor_type import Communicator, TorchTensorType
 from ray.experimental.util.types import _CollectiveOp, ReduceOp
 from ray.util.annotations import DeveloperAPI
@@ -94,37 +93,6 @@ class _CollectiveOperation(_NcclOperation):
     @property
     def nccl_op_type(self) -> _CollectiveOp:
         return self._op
-
-    def init_communicator(
-        self,
-        communicator_id: Optional[str] = None,
-        use_communication_streams: bool = False,
-    ) -> str:
-        """
-        Initialize the communicator if it has not been initialized yet. If
-        `communicator_id` is provided, it means the communicator has already
-        been initialized.
-
-        Args:
-            communicator_id: The communicator ID, if already initialized.
-            use_communication_streams: Whether to use a dedicated stream for
-                collective communication. If True, communication and computation
-                can be overlapped to improve performance.
-
-        Returns:
-            The NCCL group ID.
-        """
-        type_hint = self._type_hint
-        if type_hint.communicator_id is not None:
-            return type_hint.communicator_id
-        if communicator_id is None:
-            communicator_id = _init_communicator(
-                self._actor_handles,
-                type_hint.get_custom_communicator(),
-                use_communication_streams,
-            )
-        type_hint.set_communicator_id(communicator_id)
-        return communicator_id
 
     def get_communicator(self) -> Communicator:
         if self._type_hint.communicator_id is not None:
