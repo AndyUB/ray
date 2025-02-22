@@ -97,6 +97,11 @@ class TorchTensorWorker:
             vals[i] = self.recv(tensor)
         return vals
 
+    def compute_inc(self, tensor, repeat):
+        for _ in range(repeat):
+            tensor += 1
+        return tensor[0].item(), tensor.shape, tensor.dtype
+
     def compute_with_tuple_args(self, args, i: int):
         shape, dtype, value = args[i]
         tensor = torch.ones(shape, dtype=dtype, device=self.device) * value
@@ -327,7 +332,7 @@ def test_torch_tensor_auto(ray_start_regular, num_gpus):
     [({"num_cpus": 4}, False), ({"num_cpus": 4}, True)],
     indirect=["ray_start_regular"],
 )
-def test_torch_tensor_nccl_overlap_timed(ray_start_regular, overlap_gpu_communication):
+def test_torch_tensor_nccl_overlap_p2p(ray_start_regular, overlap_gpu_communication):
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 
@@ -370,6 +375,220 @@ def test_torch_tensor_nccl_overlap_timed(ray_start_regular, overlap_gpu_communic
     compiled_dag.teardown()
 
 
+@pytest.mark.parametrize("overlap_gpu_communication", [False, True])
+def test_torch_tensor_nccl_overlap_collective(
+    ray_start_regular, overlap_gpu_communication
+):
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) >= 2
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    dtype = torch.float16
+    coll_shape = (100_000_000,)
+    comp_shape = (100_000,)
+    comp_repeat = 1_000
+    with InputNode() as inp:
+        coll_inputs = [worker.send.bind(coll_shape, dtype, inp) for worker in workers]
+        comp_inputs = [worker.send.bind(comp_shape, dtype, inp) for worker in workers]
+        comp_outputs = [
+            worker.compute_inc.bind(comp, comp_repeat)
+            for worker, comp in zip(workers, comp_inputs)
+        ]
+        coll_values = collective.allreduce.bind(coll_inputs)
+        coll_outputs = [
+            worker.recv.bind(coll) for worker, coll in zip(workers, coll_values)
+        ]
+        dag = MultiOutputNode(coll_outputs + comp_outputs)
+
+    compiled_dag = dag.experimental_compile(
+        _overlap_gpu_communication=overlap_gpu_communication
+    )
+
+    elapses = []
+    start = time.monotonic()
+    for i in range(5):
+        start = time.monotonic()
+        ref = compiled_dag.execute(i)
+        result = ray.get(ref)
+        duration = time.monotonic() - start
+        elapses.append(duration)
+        assert (
+            result
+            == [(i * num_workers, coll_shape, dtype)] * num_workers
+            + [(i + comp_repeat, comp_shape, dtype)] * num_workers
+        )
+    duration = time.monotonic() - start
+    print(f"{overlap_gpu_communication=}, {duration=}")
+    for i, elapse in enumerate(elapses):
+        print(f"iteration {i=}, {elapse=}")
+
+    compiled_dag.teardown()
+
+
+@pytest.mark.parametrize("overlap_gpu_communication", [False, True])
+def test_torch_tensor_nccl_overlap_p2p_and_collective(
+    ray_start_regular, overlap_gpu_communication
+):
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) >= 2
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    dtype = torch.float16
+    coll_shape = (100_000_000,)
+    send_shape = (100_000_000,)
+    with InputNode() as inp:
+        coll_inputs = [worker.send.bind(coll_shape, dtype, inp) for worker in workers]
+        sends = [
+            worker.send.bind(send_shape, dtype, inp).with_tensor_transport("nccl")
+            for worker in workers
+        ]
+        recvs = [workers[0].recv.bind(sends[1]), workers[1].recv.bind(sends[0])]
+        coll_values = collective.allreduce.bind(coll_inputs)
+        coll_outputs = [
+            worker.recv.bind(coll) for worker, coll in zip(workers, coll_values)
+        ]
+        dag = MultiOutputNode(coll_outputs + recvs)
+
+    compiled_dag = dag.experimental_compile(
+        _overlap_gpu_communication=overlap_gpu_communication
+    )
+
+    elapses = []
+    start = time.monotonic()
+    for i in range(5):
+        start = time.monotonic()
+        ref = compiled_dag.execute(i)
+        result = ray.get(ref)
+        duration = time.monotonic() - start
+        elapses.append(duration)
+        assert (
+            result
+            == [(i * num_workers, coll_shape, dtype)] * num_workers
+            + [(i, send_shape, dtype)] * num_workers
+        )
+    duration = time.monotonic() - start
+    print(f"{overlap_gpu_communication=}, {duration=}")
+    for i, elapse in enumerate(elapses):
+        print(f"iteration {i=}, {elapse=}")
+
+    compiled_dag.teardown()
+
+
+@pytest.mark.parametrize("overlap_gpu_communication", [False, True])
+def test_torch_tensor_nccl_send_overlap_result_across_actors(
+    ray_start_regular, overlap_gpu_communication
+):
+    """
+    A GPU future cannot be sent across actors. This test checks that the
+    SharedMemoryChannel waits for the future to complete before writing the
+    result.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) >= 2
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    dtype = torch.float16
+    coll_shape = (1000,)
+    with InputNode() as inp:
+        coll_inputs = [worker.send.bind(coll_shape, dtype, inp) for worker in workers]
+        coll_values = collective.allreduce.bind(coll_inputs)
+        coll_outputs = [
+            # Collective results are sent across actors.
+            workers[0].recv.bind(coll_values[1]),
+            workers[1].recv.bind(coll_values[0]),
+        ]
+        dag = MultiOutputNode(coll_outputs)
+
+    compiled_dag = dag.experimental_compile(
+        _overlap_gpu_communication=overlap_gpu_communication
+    )
+
+    for i in range(5):
+        ref = compiled_dag.execute(i)
+        result = ray.get(ref)
+        assert result == [(i * num_workers, coll_shape, dtype)] * num_workers
+
+    compiled_dag.teardown()
+
+    with InputNode() as inp:
+        coll_inputs = [worker.send.bind(coll_shape, dtype, inp) for worker in workers]
+        coll_values = collective.allreduce.bind(coll_inputs)
+        # Collective results are read by the driver.
+        dag = MultiOutputNode(coll_values)
+
+    compiled_dag = dag.experimental_compile(
+        _overlap_gpu_communication=overlap_gpu_communication
+    )
+
+    for i in range(5):
+        ref = compiled_dag.execute(i)
+        results = ray.get(ref)
+        expected_value = i * num_workers
+        expected = torch.ones(coll_shape) * expected_value
+        for actual in results:
+            assert torch.equal(expected, actual.cpu())
+
+
+@pytest.mark.parametrize("overlap_gpu_communication", [False, True])
+def test_torch_tensor_nccl_same_future_multiple_waits(
+    ray_start_regular, overlap_gpu_communication
+):
+    """
+    A GPU future destroys its CUDA event after the first wait. This test
+    checks that waiting on the same future multiple times does not error.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) >= 1
+    ), "This test requires at least 1 GPU"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+    worker = actor_cls.remote()
+
+    dtype = torch.float16
+    coll_shape = (1000,)
+    with InputNode() as inp:
+        coll_input = [worker.send.bind(coll_shape, dtype, inp)]
+        coll_value = collective.allreduce.bind(coll_input)[0]
+        # Waiting multiple times on the same GPU future should not error.
+        coll_outputs = [worker.recv.bind(coll_value), worker.recv.bind(coll_value)]
+        dag = MultiOutputNode(coll_outputs)
+
+    compiled_dag = dag.experimental_compile(
+        _overlap_gpu_communication=overlap_gpu_communication
+    )
+
+    for i in range(5):
+        ref = compiled_dag.execute(i)
+        result = ray.get(ref)
+        assert result == [(i, coll_shape, dtype), (i, coll_shape, dtype)]
+
+    compiled_dag.teardown()
+
+
 def test_torch_tensor_nccl_disallows_driver(ray_start_regular):
     """
     Check that the driver cannot participate in the NCCL group, i.e. DAG input
@@ -398,8 +617,8 @@ def test_torch_tensor_nccl_disallows_driver(ray_start_regular):
     with pytest.raises(
         ValueError,
         match=(
-            r"DAG inputs cannot be transferred "
-            "via NCCL because the driver cannot participate in the NCCL group"
+            r"DAG inputs cannot be transferred via NCCL because the driver cannot "
+            "participate in the NCCL group"
         ),
     ):
         dag.experimental_compile()
@@ -411,7 +630,10 @@ def test_torch_tensor_nccl_disallows_driver(ray_start_regular):
 
     with pytest.raises(
         ValueError,
-        match=(r"Driver cannot participate in the NCCL group\."),
+        match=(
+            "Outputs cannot be transferred via NCCL because the driver cannot "
+            "participate in the NCCL group"
+        ),
     ):
         dag.experimental_compile()
 
@@ -520,6 +742,10 @@ def test_torch_tensor_custom_comm(ray_start_regular):
         @property
         def send_stream(self) -> Optional["cp.cuda.ExternalStream"]:
             return self._inner.send_stream
+
+        @property
+        def coll_stream(self) -> Optional["cp.cuda.ExternalStream"]:
+            return self._inner.coll_stream
 
         def destroy(self) -> None:
             return self._inner.destroy()
@@ -666,6 +892,16 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
 
             return cp.cuda.get_current_stream()
 
+        @property
+        def coll_stream(self) -> Optional["cp.cuda.ExternalStream"]:
+            import cupy as cp
+
+            return cp.cuda.get_current_stream()
+
+        @property
+        def coll_stream(self) -> Optional["cp.cuda.ExternalStream"]:
+            return None
+
         def destroy(self) -> None:
             pass
 
@@ -811,6 +1047,12 @@ def test_torch_tensor_default_comm(ray_start_regular, transports):
 
         @property
         def send_stream(self) -> Optional["cp.cuda.ExternalStream"]:
+            import cupy as cp
+
+            return cp.cuda.get_current_stream()
+
+        @property
+        def coll_stream(self) -> Optional["cp.cuda.ExternalStream"]:
             import cupy as cp
 
             return cp.cuda.get_current_stream()
@@ -1487,6 +1729,10 @@ def test_torch_tensor_nccl_all_reduce_custom_comm(ray_start_regular):
         def send_stream(self) -> Optional["cp.cuda.ExternalStream"]:
             return self._inner.send_stream
 
+        @property
+        def coll_stream(self) -> Optional["cp.cuda.ExternalStream"]:
+            return self._inner.coll_stream
+
         def destroy(self) -> None:
             return self._inner.destroy()
 
@@ -2006,7 +2252,10 @@ def test_torch_nccl_channel_with_local_reader(ray_start_regular):
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_nccl_channel_with_two_local_readers(ray_start_regular):
+@pytest.mark.parametrize("overlap_gpu_communication", [False, True])
+def test_torch_nccl_channel_with_two_local_readers(
+    ray_start_regular, overlap_gpu_communication
+):
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
     assert (
@@ -2028,7 +2277,9 @@ def test_torch_nccl_channel_with_two_local_readers(ray_start_regular):
         branch2 = w1.recv.bind(dag)
         branch3 = w2.recv.bind(dag)
         dag = MultiOutputNode([branch1, branch2, branch3])
-    compiled_dag = dag.experimental_compile()
+    compiled_dag = dag.experimental_compile(
+        _overlap_gpu_communication=overlap_gpu_communication
+    )
     for i in range(3):
         ref = compiled_dag.execute(i, shape=shape, dtype=dtype)
         assert ray.get(ref) == [(i, shape, dtype), (i, shape, dtype), (i, shape, dtype)]

@@ -1,56 +1,13 @@
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Optional
 from ray.util.annotations import DeveloperAPI
 
 
 if TYPE_CHECKING:
     import cupy as cp
 
-T = TypeVar("T")
-
 
 @DeveloperAPI
-class DAGOperationFuture(ABC, Generic[T]):
-    """
-    A future representing the result of a DAG operation.
-
-    This is an abstraction that is internal to each actor,
-    and is not exposed to the DAG caller.
-    """
-
-    @abstractmethod
-    def wait(self):
-        """
-        Wait for the future and return the result of the operation.
-        """
-        raise NotImplementedError
-
-
-@DeveloperAPI
-class ResolvedFuture(DAGOperationFuture):
-    """
-    A future that is already resolved. Calling `wait()` on this will
-    immediately return the result without blocking.
-    """
-
-    def __init__(self, result):
-        """
-        Initialize a resolved future.
-
-        Args:
-            result: The result of the future.
-        """
-        self._result = result
-
-    def wait(self):
-        """
-        Wait and immediately return the result. This operation will not block.
-        """
-        return self._result
-
-
-@DeveloperAPI
-class GPUFuture(DAGOperationFuture[Any]):
+class GPUFuture:
     """
     A future for a GPU event on a CUDA stream.
 
@@ -82,14 +39,68 @@ class GPUFuture(DAGOperationFuture[Any]):
         self._buf = buf
         self._event = cp.cuda.Event()
         self._event.record(stream)
+        self._fut_id: Optional[int] = None
+        self._ready: bool = False
 
-    def wait(self) -> Any:
+    def wait(self, blocking: bool = False) -> Any:
         """
-        Wait for the future on the current CUDA stream and return the result from
-        the GPU operation. This operation does not block CPU.
+        Wait for the future on the current CUDA stream. Future operations on the
+        current CUDA stream will not begin until the GPU operation captured
+        by this future finishes.
+
+        Args:
+            blocking: Whether this operation blocks CPU. This is used when
+                the future is sent across actors (e.g., by SharedMemoryChannel),
+                in which case the future should be resolved immediately.
+
+        Return:
+            Result from the GPU operation. The returned result is immediately
+            ready to use iff blocking.
+        """
+        import cupy as cp
+        from ray.experimental.channel.common import ChannelContext
+
+        current_stream = cp.cuda.get_current_stream()
+        if self._ready:
+            # The current stream has been told to wait on the event,
+            # but the wait might not have finished yet.
+            if blocking:
+                current_stream.synchronize()
+            return self._buf
+        self._ready = True
+
+        current_stream.wait_event(self._event)
+        if blocking:
+            current_stream.synchronize()
+
+        ctx = ChannelContext.get_current().serialization_context
+        # This GPU future is no longer needed. Destroy the CUDA event it contains.
+        ctx.pop_gpu_future(self._fut_id)
+        return self._buf
+
+    def cache(self, fut_id: int) -> None:
+        """
+        Cache the future inside the actor's channel context so that the CUDA
+        event it contains can be destroyed controllably.
+
+        Args:
+            fut_id: The id of this future, which is the corresponding task's index.
+        """
+        from ray.experimental.channel.common import ChannelContext
+
+        self._fut_id = fut_id
+        ctx = ChannelContext.get_current().serialization_context
+        ctx.set_gpu_future(fut_id, self)
+
+    def destroy_event(self) -> None:
+        """
+        Destroys the CUDA event contained in this future.
         """
         import cupy as cp
 
-        current_stream = cp.cuda.get_current_stream()
-        current_stream.wait_event(self._event)
-        return self._buf
+        if self._event is None:
+            return
+
+        cp.cuda.runtime.eventDestroy(self._event.ptr)
+        self._event.ptr = 0
+        self._event = None

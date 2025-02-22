@@ -440,6 +440,18 @@ class Channel(ChannelInterface):
         # -1 means no timeout (block indefinitely)
         timeout_ms = int(timeout * 1000) if timeout is not None else -1
 
+        from ray.dag.dag_operation_future import GPUFuture
+
+        if isinstance(value, GPUFuture):
+            logger.warning(
+                "Sending the result of an asynchronous NCCL operation across actors. "
+                "This blocks the CPU while waiting for the NCCL operation to finish."
+            )
+            # The GPU future cannot be sent directly across actors. We need to use
+            # `blocking=True` to ensure the future is ready so that the serialized
+            # value is correct.
+            value = value.wait(blocking=True)
+
         if not isinstance(value, SerializedObject):
             try:
                 serialized_value = self._worker.get_serialization_context().serialize(
