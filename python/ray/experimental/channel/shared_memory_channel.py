@@ -433,6 +433,8 @@ class Channel(ChannelInterface):
             # )
 
     def write(self, value: Any, timeout: Optional[float] = None) -> None:
+        from ray.dag.dag_operation_future import GPUFuture
+
         self.ensure_registered_as_writer()
         assert (
             timeout is None or timeout >= 0 or timeout == -1
@@ -440,16 +442,12 @@ class Channel(ChannelInterface):
         # -1 means no timeout (block indefinitely)
         timeout_ms = int(timeout * 1000) if timeout is not None else -1
 
-        from ray.dag.dag_operation_future import GPUFuture
-
         if isinstance(value, GPUFuture):
             logger.warning(
-                "Sending the result of an asynchronous NCCL operation across actors. "
-                "This blocks the CPU while waiting for the NCCL operation to finish."
+                "Blocking the CPU to resolve a GPU future when sending across actors "
+                "via a shared memory channel"
             )
-            # The GPU future cannot be sent directly across actors. We need to use
-            # `blocking=True` to ensure the future is ready so that the serialized
-            # value is correct.
+            # Block the CPU to resolve the GPU future.
             value = value.wait(blocking=True)
 
         if not isinstance(value, SerializedObject):
