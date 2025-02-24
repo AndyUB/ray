@@ -304,7 +304,7 @@ class _NcclGroup(Communicator):
             self.nccl_util.get_tensor_ptr(recv_buf),
             send_buf.numel(),
             self.nccl_util.get_nccl_tensor_dtype(send_buf),
-            self._cuda_stream.ptr,
+            self._coll_stream.ptr,
         ]
         self._exec_collective(
             send_buf,
@@ -325,7 +325,7 @@ class _NcclGroup(Communicator):
             send_buf.numel(),
             self.nccl_util.get_nccl_tensor_dtype(send_buf),
             op.value,
-            self._cuda_stream.ptr,
+            self._coll_stream.ptr,
         ]
         self._exec_collective(
             send_buf,
@@ -346,7 +346,7 @@ class _NcclGroup(Communicator):
             recv_buf.numel(),
             self.nccl_util.get_nccl_tensor_dtype(send_buf),
             op.value,
-            self._cuda_stream.ptr,
+            self._coll_stream.ptr,
         ]
         self._exec_collective(
             send_buf,

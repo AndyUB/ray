@@ -1192,6 +1192,21 @@ def test_torch_tensor_invalid_custom_comm(ray_start_regular):
         ) -> None:
             raise NotImplementedError
 
+        def allgather(
+            self,
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
+        ) -> None:
+            raise NotImplementedError
+
+        def reducescatter(
+            self,
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
+            op: ReduceOp,
+        ):
+            raise NotImplementedError
+
         @property
         def recv_stream(self) -> Optional["cp.cuda.ExternalStream"]:
             import cupy as cp
@@ -1200,6 +1215,12 @@ def test_torch_tensor_invalid_custom_comm(ray_start_regular):
 
         @property
         def send_stream(self) -> Optional["cp.cuda.ExternalStream"]:
+            import cupy as cp
+
+            return cp.cuda.get_current_stream()
+
+        @property
+        def coll_stream(self) -> Optional["cp.cuda.ExternalStream"]:
             import cupy as cp
 
             return cp.cuda.get_current_stream()

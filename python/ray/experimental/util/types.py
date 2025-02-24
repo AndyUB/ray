@@ -4,12 +4,12 @@ from enum import Enum
 from ray.util.annotations import PublicAPI
 
 
-class _NcclOpType(Enum):
+class _NcclOpType:
     pass
 
 
 @PublicAPI
-class P2POp(_NcclOpType):
+class P2POp(_NcclOpType, Enum):
     SEND = 0
     RECV = 1
 
