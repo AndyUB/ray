@@ -38,7 +38,7 @@ latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.linear.ray.ddp \
+python -m ray.experimental.fsdp.src.main.linear.ray.fsdp \
     --layer-size $layer_size \
     --num-layers $num_layers \
     --num-partitions $num_partitions \

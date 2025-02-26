@@ -57,7 +57,7 @@ log_file=$output_path/${timestamp}.log
 #     >$log_file 2>&1
 # status=$?
 
-python -m ray.experimental.fsdp.src.main.linear.ray.ddp \
+python -m ray.experimental.fsdp.src.main.linear.ray.fsdp \
     --layer-size $layer_size \
     --num-layers $num_layers \
     --num-partitions $num_partitions \
