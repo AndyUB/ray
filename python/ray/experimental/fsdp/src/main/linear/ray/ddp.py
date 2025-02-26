@@ -30,8 +30,8 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     actors = [
         actor_cls.remote(
             layer_size=layer_size,
-            num_layers=num_layers,
-            num_partitions=num_partitions,
+            num_layers_per_unit=num_layers,
+            num_units=num_partitions,
             num_actors=num_actors,
             device=device,
             tracing=tracing,
