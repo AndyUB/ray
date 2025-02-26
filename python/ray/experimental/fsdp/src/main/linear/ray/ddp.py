@@ -44,7 +44,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
 
 def train(
     actors: List[LinearActor],
-    num_partitions: int,
+    num_units: int,
     num_iters: int,
     output_path: str,
     latency_prefix: str,
@@ -53,8 +53,8 @@ def train(
     tracing: bool,
 ) -> None:
     with InputNode() as inp:
-        xs = [actor.get_input(inp) for actor in actors]
-        for unit in range(num_partitions):
+        xs = [actor.get_input.bind(inp) for actor in actors]
+        for unit in range(num_units):
             shards = [actor.get_shard.bind(unit, inp) for actor in actors]
             unsharded_params = allgather.bind(shards)
             xs = [
@@ -67,11 +67,11 @@ def train(
         reduced_grads = reducescatter.bind(grads)
         outputs = []
         updates = [
-            actor.update.bind(num_partitions - 1, reduced_grad)
+            actor.update.bind(num_units - 1, reduced_grad)
             for actor, reduced_grad in zip(actors, reduced_grads)
         ]
         outputs.extend(updates)
-        for unit in reversed(range(num_partitions - 1)):
+        for unit in reversed(range(num_units - 1)):
             shards = [actor.get_shard.bind(unit, inp) for actor in actors]
             unsharded_params = allgather.bind(shards)
             grads = [
@@ -85,48 +85,12 @@ def train(
             ]
             outputs.extend(updates)
         dag = MultiOutputNode(outputs)
-    
-    compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
-    compiled_dag.teardown()
-
-
-def train(
-    actors: List[LinearActor],
-    num_partitions: int,
-    num_iters: int,
-    output_path: str,
-    latency_prefix: str,
-    save_model: bool,
-    model_prefix: str,
-    tracing: bool,
-) -> None:
-    with InputNode() as inp:
-        actors_to_forwards = [actor.forward.bind(inp) for actor in actors]
-        actors_to_backwards = actors_to_forwards
-        outputs = []
-
-        actors_to_backwards = [
-            actor.backward.bind(actors_to_backwards[j], num_partitions - 1)
-            for j, actor in enumerate(actors)
-        ]
-        for i in reversed(range(num_partitions)):
-            grads_allreduced = allreduce.bind(actors_to_backwards)
-            if i > 0:
-                actors_to_backwards = [
-                    actor.backward.bind(actors_to_backwards[j], i - 1)
-                    for j, actor in enumerate(actors)
-                ]
-            actors_to_updates = [
-                actor.update.bind(grads_allreduced[j], True, i)
-                for j, actor in enumerate(actors)
-            ]
-            outputs.extend(actors_to_updates)
-
-        dag = MultiOutputNode(outputs)
 
     compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
-    for actor in actors:
-        ray.get(actor.init_weights.remote())
+
+    shards_across_actors = ray.get(actors[0].init_and_shard_model.remote())
+    for actor, shards in zip(actors, shards_across_actors):
+        ray.get(actor.set_shards.remote(shards))
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
@@ -190,6 +154,8 @@ def train(
             with open(model_file, "w") as f:
                 for weight in weights:
                     f.write(f"{weight}\n")
+
+    compiled_dag.teardown()
 
 
 def main(args: Dict[str, Any]) -> None:
