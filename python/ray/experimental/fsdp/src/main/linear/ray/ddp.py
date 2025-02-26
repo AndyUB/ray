@@ -88,20 +88,29 @@ def train(
 
     compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
 
+    logger.warning("=====START=====")
     shards_across_actors = ray.get(actors[0].init_and_shard_model.remote())
+    logger.warning("Initialized and sharded model")
     for actor, shards in zip(actors, shards_across_actors):
         ray.get(actor.set_shards.remote(shards))
+    logger.warning("Set shards")
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
+        logger.warning(f"[iter={iter}]")
         for actor in actors:
             ray.get(actor.init_training.remote())
             ray.get(actor.init_tracing.remote())
 
         start = get_timing_event()
-        compiled_dag.execute(None)
+        logger.warning("Start training")
+        ref = compiled_dag.execute(None)
+        result = ray.get(ref)
+        print(result)
+        logger.warning("End training")
         end = get_timing_event()
         torch.cuda.synchronize()
+        logger.warning("Synchronized")
 
         elapse_ms = start.elapsed_time(end)
         elapse_us = round(elapse_ms * 1e3)

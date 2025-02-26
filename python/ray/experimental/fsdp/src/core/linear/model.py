@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 from torch.nn.utils import parameters_to_vector
@@ -88,17 +88,25 @@ class BucketParameter(torch.nn.Module):
 
 
 class Shard(torch.nn.Module):
-    def __init__(self, module: torch.nn.Module, shard: torch.Tensor) -> None:
+    def __init__(
+        self,
+        module: torch.nn.Module,
+        shard: torch.Tensor,
+        param_metadata: List[Tuple[torch.Size, int]],
+    ) -> None:
+        super().__init__()
+
         self.shard = torch.nn.Parameter(shard, requires_grad=True)
         self.shard_size = len(shard)
         self.sharded_module = module
-        self.optimizer = torch.optim.Adam(self.shard, lr=1e-3)
+        self.param_metadata = param_metadata
+        self.optimizer = torch.optim.Adam([self.shard], lr=1e-3)
 
     def unwrap(self) -> torch.nn.Parameter:
         return self.shard
 
     def unshard(self, flat_param: torch.Tensor) -> None:
-        unshard_model(self.sharded_module, flat_param)
+        unshard_model(self.sharded_module, flat_param, self.param_metadata)
 
     def free_peer_shards(self) -> None:
         _free_model(self.sharded_module)
@@ -120,7 +128,7 @@ class Shard(torch.nn.Module):
 
 def shard_model(model: torch.nn.Module, sharding_factor: int) -> List[Shard]:
     flat_param = parameters_to_vector(model.parameters())
-    padding = (sharding_factor - flat_param % sharding_factor) % sharding_factor
+    padding = (sharding_factor - flat_param.numel() % sharding_factor) % sharding_factor
     if padding != 0:
         dtype = flat_param.dtype
         device = flat_param.device
@@ -132,8 +140,13 @@ def shard_model(model: torch.nn.Module, sharding_factor: int) -> List[Shard]:
         flat_param[shard_size * i : shard_size * (i + 1)]
         for i in range(sharding_factor)
     ]
+    param_metadata = _model_param_metadata(model)
     model = _free_model(model)
-    return [Shard(model, shard) for shard in shards]
+    return [Shard(model, shard, param_metadata) for shard in shards]
+
+
+def _model_param_metadata(model: torch.nn.Module) -> List[Tuple[torch.Size, int]]:
+    return [(param.shape, param.numel()) for param in model.parameters()]
 
 
 def _free_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -152,11 +165,16 @@ def _free_model(model: torch.nn.Module) -> torch.nn.Module:
     return model
 
 
-def unshard_model(model: torch.nn.Module, flat_param: torch.Tensor) -> torch.nn.Module:
+def unshard_model(
+    model: torch.nn.Module,
+    flat_param: torch.Tensor,
+    param_metedata: List[Tuple[torch.Size, int]],
+) -> torch.nn.Module:
     start_idx = 0
     with torch.no_grad():
-        for param in model.parameters():
-            end_idx = start_idx + param.numel()
-            param.data = flat_param[start_idx:end_idx].reshape(param.shape)
+        for param, metadata in zip(model.parameters(), param_metedata):
+            shape, numel = metadata
+            end_idx = start_idx + numel
+            param.data = flat_param[start_idx:end_idx].reshape(shape)
             start_idx = end_idx
     return model

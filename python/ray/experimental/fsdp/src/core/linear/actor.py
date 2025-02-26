@@ -62,11 +62,12 @@ class LinearActor:
 
     def init_training(self) -> None:
         self.input = torch.randn(
-            1, self.layer_size, device=self.device, requires_grad=True
+            (1, self.layer_size), device=self.device, requires_grad=True
         )
         self.output = torch.randn(
-            1, self.layer_size, device=self.device, requires_grad=False
+            (1, self.layer_size), device=self.device, requires_grad=False
         )
+        self.intermediates = []
 
     def update_tracing(self, key: str) -> None:
         event = torch.cuda.Event(enable_timing=True)
@@ -167,11 +168,15 @@ class LinearActor:
     ) -> torch.Tensor:
         shard = self.shards[unit]
         shard.unshard(unsharded_param)
-        self.update_tracing("start")
+        if unit == 0:
+            self.update_tracing("start")
         if self.tracing:
             self.update_tracing("forward_starts")
         pred: torch.Tensor = shard(x)
-        next_layer_input = pred.detach().requires_grad_(True)
+        if unit == self.num_units - 1:
+            next_layer_input = pred
+        else:
+            next_layer_input = pred.detach().requires_grad_(True)
         self.intermediates.append((pred, next_layer_input))
         if self.tracing:
             self.update_tracing("forward_ends")
