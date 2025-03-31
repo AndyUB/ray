@@ -107,10 +107,12 @@ class LinearActor:
             "comp.loss.ends": [],
             "bw.loss.starts": [],
             "bw.loss.ends": [],
-            "bw.grad.starts": [],
+            "bw.grad.pre.starts": [],
             "bw.grad.pre.ends": [],
+            "bw.grad.intra.starts": [],
+            "bw.grad.intra.ends": [],
             "bw.grad.post.starts": [],
-            "bw.grad.ends": [],
+            "bw.grad.post.ends": [],
             "bw.upd.starts": [],
             "bw.upd.ends": [],
         }
@@ -172,27 +174,30 @@ class LinearActor:
             bw_loss = self.events["bw.loss.starts"][0].elapsed_time(
                 self.events["bw.loss.ends"][0]
             )
-            bw_grad = sum(
+            bw_grad_pre = sum(
                 [
-                    bw_grad_start.elapsed_time(bw_grad_end)
-                    for bw_grad_start, bw_grad_end in zip(
-                        self.events["bw.grad.starts"], self.events["bw.grad.ends"]
+                    bw_grad_pre_start.elapsed_time(bw_grad_pre_end)
+                    for bw_grad_pre_start, bw_grad_pre_end in zip(
+                        self.events["bw.grad.pre.starts"],
+                        self.events["bw.grad.pre.ends"],
                     )
                 ]
             )
-            bw_grad_pre = sum(
+            bw_grad_intra = sum(
                 [
-                    bw_grad_start.elapsed_time(bw_grad_pre_end)
-                    for bw_grad_start, bw_grad_pre_end in zip(
-                        self.events["bw.grad.starts"], self.events["bw.grad.pre.ends"]
+                    bw_grad_intra_start.elapsed_time(bw_grad_intra_end)
+                    for bw_grad_intra_start, bw_grad_intra_end in zip(
+                        self.events["bw.grad.intra.starts"],
+                        self.events["bw.grad.intra.ends"],
                     )
                 ]
             )
             bw_grad_post = sum(
                 [
-                    bw_grad_post_start.elapsed_time(bw_grad_end)
-                    for bw_grad_post_start, bw_grad_end in zip(
-                        self.events["bw.grad.post.starts"], self.events["bw.grad.ends"]
+                    bw_grad_post_start.elapsed_time(bw_grad_post_end)
+                    for bw_grad_post_start, bw_grad_post_end in zip(
+                        self.events["bw.grad.post.starts"],
+                        self.events["bw.grad.post.ends"],
                     )
                 ]
             )
@@ -204,13 +209,15 @@ class LinearActor:
                     )
                 ]
             )
-            bw_grad_others = bw_total - bw_loss - bw_upd
+            bw_grad_wo_loss_upd = bw_total - bw_loss - bw_upd
             log("bw.total", bw_total)
             log("bw.loss", bw_loss)
-            log("bw.grad", bw_grad, len(self.events["bw.grad.starts"]))
-            log("bw.grad_pre", bw_grad_pre, len(self.events["bw.grad.starts"]))
-            log("bw.grad_post", bw_grad_post, len(self.events["bw.grad.starts"]))
-            log("bw.grad_others", bw_grad_others)
+            log("bw.grad.pre", bw_grad_pre, len(self.events["bw.grad.pre.starts"]))
+            log(
+                "bw.grad.intra", bw_grad_intra, len(self.events["bw.grad.intra.starts"])
+            )
+            log("bw.grad.post", bw_grad_post, len(self.events["bw.grad.post.starts"]))
+            log("bw.grad.wo.loss_upd", bw_grad_wo_loss_upd)
             log("bw.upd", bw_upd, len(self.events["bw.upd.starts"]))
         logger.warning("")
 
@@ -263,7 +270,7 @@ class LinearActor:
             self.update_tracing("comp.loss.ends")
         return loss
 
-    def backward_loss(self, loss: torch.Tensor) -> None:
+    def backward_loss(self, loss: torch.Tensor) -> torch.Tensor:
         if self.tracing:
             self.update_tracing("bw.loss.starts")
         loss.backward()
@@ -274,22 +281,46 @@ class LinearActor:
             self.update_tracing("bw.loss.ends")
         return flat_grad
 
-    def backward(self, idx: int, flat_param: torch.Tensor) -> torch.Tensor:
+    def backward_pre(self, idx: int, flat_param: torch.Tensor) -> None:
         if self.tracing:
-            self.update_tracing("bw.grad.starts")
+            self.update_tracing("bw.grad.pre.starts")
         shard = self.shards[idx]
         shard.set_flat_param(flat_param)
+        if self.tracing:
+            self.update_tracing("bw.grad.pre.ends")
+        return None
+
+    def backward_intra(
+        self, idx: int, _flat_param: torch.Tensor, _backward_pre
+    ) -> torch.Tensor:
+        if self.tracing:
+            self.update_tracing("bw.grad.intra.starts")
+        # [NOTE] backward_pre.
+        # shard = self.shards[idx]
+        # shard.set_flat_param(flat_param)
         pred, pred_as_input = self.intermediates[idx]
         grad = pred_as_input.grad
         if self.tracing:
             self.update_tracing("bw.grad.pre.ends")
         pred.backward(grad)
+        # [NOTE] backward_post.
+        # flat_grad = shard.get_flat_grad()
+        # shard.free_peer_shards()
+        if self.tracing:
+            self.update_tracing("bw.grad.intra.ends")
+        # return flat_grad
+        return None
+
+    def backward_post(
+        self, idx: int, _flat_param: torch.Tensor, _backward_intra
+    ) -> torch.Tensor:
         if self.tracing:
             self.update_tracing("bw.grad.post.starts")
+        shard = self.shards[idx]
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
         if self.tracing:
-            self.update_tracing("bw.grad.ends")
+            self.update_tracing("bw.grad.post.ends")
         return flat_grad
 
     def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:

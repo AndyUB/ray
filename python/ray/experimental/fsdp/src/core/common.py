@@ -1,7 +1,7 @@
 import csv
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -42,11 +42,14 @@ def log_elapses_to_csv(
     output_path: str,
     latency_prefix: str,
     metrics: List[str],
-    aliases: List[str],
+    aliases: Optional[List[str]] = None,
     warmup: float = 0.2,
 ) -> None:
     # Create output directory if it doesn't exist
     os.makedirs(output_path, exist_ok=True)
+
+    if aliases is None:
+        aliases = [None] * len(metrics)
 
     # Process each rank's data
     for idx, metric_values in enumerate(ranks_to_elapses):

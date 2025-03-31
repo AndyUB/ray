@@ -684,7 +684,6 @@ class TransformerBP(nn.Module):
             for _, child in layer.named_children():
                 log_size(child, indent + 1)
 
-        # self.tok_embeddings = VocabParallelEmbedding(
         self.tok_embeddings = torch.nn.Embedding(
             params.vocab_size,
             params.dim,
@@ -698,7 +697,6 @@ class TransformerBP(nn.Module):
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         log_size(self.norm)
-        # self.output = ColumnParallelLinear(
         self.output = torch.nn.Linear(
             params.dim,
             params.vocab_size,
@@ -754,6 +752,117 @@ class TransformerBP(nn.Module):
 
         bp = self.bparams[-1]
         h = bp.pre_hook(h)
+        output = bp.forward(h)
+
+        return output
+
+
+def log_size(layer, indent=0):
+    num_params = sum(p.numel() for p in layer.parameters())
+    size_mib = num_params * 4 / (1024 * 1024)
+    indent_str = "  " * indent
+    logger.info(f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB")
+    if size_mib < 25:
+        return
+    for _, child in layer.named_children():
+        log_size(child, indent + 1)
+
+
+class BucketParameterBase(nn.Module):
+    pass
+
+
+class BucketParameterFirst(BucketParameterBase):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+        )
+        log_size(self.tok_embeddings)
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
+        start_pos = 0
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
+
+    def forward(self, x: torch.Tensor):
+        return self.tok_embeddings(x)
+
+
+class BucketParameterTransformerBlock(BucketParameterBase):
+    def __init__(self, params: ModelArgs, layer_id: int):
+        super().__init__()
+        self.layer = TransformerBlock(layer_id, params)
+        if layer_id == 0:
+            log_size(self.layer)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        start_pos: int,
+        freqs_cis: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
+        transformer = self.layer
+        h = x + transformer.attention(
+            transformer.attention_norm(x), start_pos, freqs_cis, mask
+        )
+        out = h + transformer.feed_forward(transformer.ffn_norm(h))
+        return out
+
+
+class BucketParameterLast(BucketParameterBase):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+        )
+        log_size(self.output)
+
+    def forward(self, x: torch.Tensor):
+        x = self.norm(x)
+        return self.output(x)
+
+
+class TransformerWrapped(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.bparams = []
+        self.bparams.append(BucketParameterFirst(params))
+        for layer_id in range(params.n_layers):
+            self.bparams.append(BucketParameterTransformerBlock(params, layer_id))
+        self.bparams.append(BucketParameterLast(params))
+        self.bparams = torch.nn.ModuleList(self.bparams)
+
+    def forward(self, tokens: torch.Tensor):
+        bp = self.bparams[0]
+        h = bp.forward(tokens)
+        freqs_cis, mask = bp.post_embeddings(tokens, h)
+
+        for bp in self.bparams[1:-1]:
+            h = bp.forward(h, 0, freqs_cis, mask)
+
+        bp = self.bparams[-1]
         output = bp.forward(h)
 
         return output

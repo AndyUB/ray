@@ -15,7 +15,6 @@ from torch.distributed.fsdp.api import BackwardPrefetch
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from torch.profiler import profile, ProfilerActivity
 
-
 from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
 from ....core.config import parse_args
 from ....core.linear.model import LinearModel
@@ -27,6 +26,46 @@ logging.basicConfig(
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
 logger.info("Welcome to Downton Abbey!")
+
+
+class LinearModel(torch.nn.Module):
+    def __init__(
+        self,
+        layer_size: int,
+        num_layers: int,
+        num_units: int,
+        device: torch.device,
+    ) -> None:
+        super().__init__()
+        assert num_layers % num_units == 0
+
+        self.layer_size = layer_size
+        self.num_layers = num_layers
+        self.num_units = num_units
+        self.device = device
+        self.bparams = torch.nn.ModuleList(
+            [
+                BucketParameter(
+                    layer_size,
+                    num_layers // num_units,
+                    device,
+                )
+                for _ in range(num_units)
+            ]
+        )
+
+        self.x = None
+        self.y = None
+        self.criterion = torch.nn.MSELoss()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for bparam in self.bparams:
+            x = bparam(x)
+        return x
+
+    def init_weights(self) -> None:
+        for bparam in self.bparams:
+            bparam.init_weights()
 
 
 def run_torch_fsdp(
@@ -42,7 +81,7 @@ def run_torch_fsdp(
         ranks_to_elapses = manager.dict()
 
         mp.spawn(
-            spwan_torch_fsdp,
+            spawn_torch_fsdp,
             args=(world_size, ranks_to_elapses, args),
             nprocs=world_size,
             join=True,
@@ -79,7 +118,7 @@ def run_torch_fsdp(
     )
 
 
-def spwan_torch_fsdp(
+def spawn_torch_fsdp(
     rank: int,
     world_size: int,
     ranks_to_elapses: Dict[int, int],
@@ -113,12 +152,11 @@ def spwan_torch_fsdp(
             model,
             auto_wrap_policy=functools.partial(
                 lambda_auto_wrap_policy,
-                lambda_fn=lambda m: isinstance(m, BucketParameter),
+                lambda_fn=lambda p: isinstance(p, BucketParameter),
             ),
             device_id=device,
             backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
             forward_prefetch=True,
-            use_orig_params=False,
         )
         optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
         if rank == 0:
@@ -186,7 +224,7 @@ def spwan_torch_fsdp(
                 log("actor.total", total_ms)
                 log("fw.total", fw_start.elapsed_time(fw_end))
                 log("loss.compute", loss_start.elapsed_time(loss_end))
-                log("bw.total", bw_start.elapsed_time(bw_end))
+                log("bw.grad", bw_start.elapsed_time(bw_end))
                 log("bw.upd", bw_upd_start.elapsed_time(bw_upd_end))
                 log("barrier", barrier_start.elapsed_time(end))
                 logger.warning("")

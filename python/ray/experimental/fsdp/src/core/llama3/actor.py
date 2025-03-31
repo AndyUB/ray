@@ -16,6 +16,8 @@ class LlamaActor:
     def __init__(
         self,
         model_args,
+        batch_size: int,
+        seq_len: int,
         num_partitions: int,
         num_actors: int,
         tracing: bool,
@@ -25,6 +27,8 @@ class LlamaActor:
 
         logger.info(f"model_args: {model_args}")
         self.model_args = model_args
+        self.batch_size = batch_size
+        self.seq_len = seq_len
         self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.tracing = tracing
@@ -59,18 +63,16 @@ class LlamaActor:
     def init_training(self) -> None:
         torch.manual_seed(self.seed)
         self.seed += 1
-        batch_size = 1
-        seq_len = 1024
 
         self.input = torch.randint(
             0,
             self.model_args.vocab_size,
-            (batch_size, seq_len),
+            (self.batch_size, self.seq_len),
             device=self.device,
         )
         self.target = torch.randn(
-            batch_size,
-            seq_len,
+            self.batch_size,
+            self.seq_len,
             self.model_args.vocab_size,
             requires_grad=True,
             device=self.device,
@@ -84,14 +86,18 @@ class LlamaActor:
             "end": [],
             "fw.starts": [],
             "fw.ends": [],
-            "comp.loss.starts": [],
-            "comp.loss.ends": [],
-            "bw.loss.starts": [],
-            "bw.loss.ends": [],
-            "bw.grad.starts": [],
-            "bw.grad.ends": [],
-            "bw.upd.starts": [],
-            "bw.upd.ends": [],
+            "bw.loss.comp.starts": [],
+            "bw.loss.comp.ends": [],
+            "bw.loss.grad.starts": [],
+            "bw.loss.grad.ends": [],
+            "bw.grad.pre.starts": [],
+            "bw.grad.pre.ends": [],
+            "bw.grad.intra.starts": [],
+            "bw.grad.intra.ends": [],
+            "bw.grad.post.starts": [],
+            "bw.grad.post.ends": [],
+            "others.upd.starts": [],
+            "others.upd.ends": [],
         }
 
         torch.cuda.synchronize()
@@ -132,50 +138,92 @@ class LlamaActor:
             total,
         )
         if self.tracing:
-            log(
-                "fw.total",
-                self.events["fw.starts"][0].elapsed_time(self.events["fw.ends"][-1]),
-                len(self.events["fw.starts"]),
+            assert len(self.events["bw.loss.comp.starts"]) == 1
+            assert len(self.events["bw.loss.comp.ends"]) == 1
+            assert len(self.events["bw.loss.grad.starts"]) == 1
+            assert len(self.events["bw.loss.grad.ends"]) == 1
+
+            fw_total = self.events["fw.starts"][0].elapsed_time(
+                self.events["fw.ends"][-1]
             )
-            assert len(self.events["comp.loss.starts"]) == 1
-            assert len(self.events["comp.loss.ends"]) == 1
-            log(
-                "loss.total",
-                self.events["comp.loss.starts"][0].elapsed_time(
-                    self.events["comp.loss.ends"][0]
-                ),
+            bw_total = self.events["bw.loss.comp.starts"][0].elapsed_time(
+                self.events["bw.grad.post.ends"][-1]
             )
-            bw_total = self.events["bw.loss.starts"][0].elapsed_time(
-                self.events["bw.upd.ends"][-1]
+            bw_loss = self.events["bw.loss.comp.starts"][0].elapsed_time(
+                self.events["bw.loss.grad.ends"][0]
             )
-            assert len(self.events["bw.loss.starts"]) == 1
-            assert len(self.events["bw.loss.ends"]) == 1
-            bw_loss = self.events["bw.loss.starts"][0].elapsed_time(
-                self.events["bw.loss.ends"][0]
+            bw_grad = self.events["bw.grad.pre.starts"][0].elapsed_time(
+                self.events["bw.grad.post.ends"][-1]
             )
-            bw_grad = sum(
+            bw_grad_pre = sum(
                 [
-                    bw_grad_start.elapsed_time(bw_grad_end)
-                    for bw_grad_start, bw_grad_end in zip(
-                        self.events["bw.grad.starts"], self.events["bw.grad.ends"]
+                    bw_grad_pre_start.elapsed_time(bw_grad_pre_end)
+                    for bw_grad_pre_start, bw_grad_pre_end in zip(
+                        self.events["bw.grad.pre.starts"],
+                        self.events["bw.grad.pre.ends"],
                     )
                 ]
             )
-            bw_upd = sum(
+            bw_grad_intra = sum(
+                [
+                    bw_grad_intra_start.elapsed_time(bw_grad_intra_end)
+                    for bw_grad_intra_start, bw_grad_intra_end in zip(
+                        self.events["bw.grad.intra.starts"],
+                        self.events["bw.grad.intra.ends"],
+                    )
+                ]
+            )
+            bw_grad_post = sum(
+                [
+                    bw_grad_post_start.elapsed_time(bw_grad_post_end)
+                    for bw_grad_post_start, bw_grad_post_end in zip(
+                        self.events["bw.grad.post.starts"],
+                        self.events["bw.grad.post.ends"],
+                    )
+                ]
+            )
+            others_upd = sum(
                 [
                     bw_upd_start.elapsed_time(bw_upd_end)
                     for bw_upd_start, bw_upd_end in zip(
-                        self.events["bw.upd.starts"], self.events["bw.upd.ends"]
+                        self.events["others.upd.starts"],
+                        self.events["others.upd.ends"],
                     )
                 ]
             )
-            bw_grad_others = bw_total - bw_loss - bw_upd
+
+            log("fw.total", fw_total, len(self.events["fw.starts"]))
             log("bw.total", bw_total)
             log("bw.loss", bw_loss)
-            log("bw.grad", bw_grad, len(self.events["bw.grad.starts"]))
-            log("bw.grad_others", bw_grad_others)
-            log("bw.upd", bw_upd, len(self.events["bw.upd.starts"]))
+            log("bw.grad", bw_grad)
+            log("bw.grad.pre", bw_grad_pre, len(self.events["bw.grad.pre.starts"]))
+            log(
+                "bw.grad.intra", bw_grad_intra, len(self.events["bw.grad.intra.starts"])
+            )
+            log("bw.grad.post", bw_grad_post, len(self.events["bw.grad.post.starts"]))
+            log("others.upd", others_upd, len(self.events["others.upd.starts"]))
         logger.warning("")
+
+    @classmethod
+    def get_metrics(cls, tracing: bool) -> List[str]:
+        if not tracing:
+            return [
+                "total",
+                "actor.total",
+            ]
+        else:
+            return [
+                "total",
+                "actor.total",
+                "fw.total",
+                "bw.total",
+                "bw.loss",
+                "bw.grad",
+                "bw.grad.pre",
+                "bw.grad.intra",
+                "bw.grad.post",
+                "others.upd",
+            ]
 
     def fetch_traces(self) -> Dict[str, List[float]]:
         return self.elapses
@@ -220,73 +268,70 @@ class LlamaActor:
             self.update_tracing("fw.ends")
         return pred_as_input
 
-    def forward_origin(self, _) -> torch.Tensor:
-        raise NotImplementedError
-        self.update_tracing("start")
-        self.update_tracing("fw.starts")
-        self.intermediates = []
-        tokens = self.input
-        input, freqs_cis, mask = None, None, None
-        for i, bp in enumerate(self.bparams):
-            if i == 0:
-                pred = bp.forward(tokens)
-                freqs_cis, mask = bp.post_hook(tokens, pred)
-            elif i < len(self.bparams) - 1:
-                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
-            else:
-                pred = bp.forward(bp.pre_hook(input))
-            if i < len(self.bparams) - 1:
-                input = pred.detach().requires_grad_(True)
-            else:
-                input = pred
-            self.intermediates.append((pred, input))
-        self.update_tracing("fw.ends")
-        return pred
-
     def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         if self.tracing:
-            self.update_tracing("comp.loss.starts")
+            self.update_tracing("bw.loss.comp.starts")
         loss = self.criterion(pred, target)
         if self.tracing:
-            self.update_tracing("comp.loss.ends")
+            self.update_tracing("bw.loss.comp.ends")
         return loss
 
     def backward_loss(self, loss: torch.Tensor) -> None:
         if self.tracing:
-            self.update_tracing("bw.loss.starts")
+            self.update_tracing("bw.loss.grad.starts")
         loss.backward()
         shard = self.shards[-1]
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
         if self.tracing:
-            self.update_tracing("bw.loss.ends")
+            self.update_tracing("bw.loss.grad.ends")
         return flat_grad
 
-    def backward(self, idx: int, flat_param: torch.Tensor) -> torch.Tensor:
+    def backward_pre(self, idx: int, flat_param: torch.Tensor) -> None:
         if self.tracing:
-            self.update_tracing("bw.grad.starts")
+            self.update_tracing("bw.grad.pre.starts")
         shard = self.shards[idx]
         shard.set_flat_param(flat_param)
+        if self.tracing:
+            self.update_tracing("bw.grad.pre.ends")
+        return None
+
+    def backward_intra(
+        self, idx: int, _flat_param: torch.Tensor, _backward_pre
+    ) -> torch.Tensor:
+        if self.tracing:
+            self.update_tracing("bw.grad.intra.starts")
         pred, pred_as_input = self.intermediates[idx]
         grad = pred_as_input.grad
         pred.backward(grad)
+        if self.tracing:
+            self.update_tracing("bw.grad.intra.ends")
+        return None
+
+    def backward_post(
+        self, idx: int, _flat_param: torch.Tensor, _backward_intra
+    ) -> torch.Tensor:
+        if self.tracing:
+            self.update_tracing("bw.grad.post.starts")
+        shard = self.shards[idx]
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
         if self.tracing:
-            self.update_tracing("bw.grad.ends")
+            self.update_tracing("bw.grad.post.ends")
         return flat_grad
 
     def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:
         if self.tracing:
-            self.update_tracing("bw.upd.starts")
+            self.update_tracing("others.upd.starts")
         if grad_passed:
             grad /= self.num_actors
         self.shards[idx].update(grad, grad_passed)
         if self.tracing:
-            self.update_tracing("bw.upd.ends")
+            self.update_tracing("others.upd.ends")
         if idx == 0:
             self.update_tracing("end")
 
+    # [TODO] Get visibility of IO.
     def copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         raise NotImplementedError
         if grads_passed:
@@ -304,9 +349,6 @@ class LlamaActor:
 
     def step_aio(self, _) -> None:
         raise NotImplementedError
-        # [NOTE] It is slower to use a single optimizer.
-        # self.optimizer.step()
-        # self.optimizer.zero_grad()
         for i in reversed(range(len(self.bparams))):
             self.step(i)
 
@@ -314,10 +356,8 @@ class LlamaActor:
         self, grads_cat: torch.Tensor, grads_passed: bool, idx: int
     ) -> None:
         raise NotImplementedError
-        self.update_tracing("bw.upd.starts")
         self.copy(grads_cat, grads_passed, idx)
         self.step(idx)
-        self.update_tracing("bw.upd.ends")
         if idx == 0:
             self.update_tracing("end")
 

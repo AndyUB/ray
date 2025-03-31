@@ -241,6 +241,9 @@ def do_exec_tasks(
         if RAY_CGRAPH_ENABLE_NVTX_PROFILING:
             nvtx_profile.disable()
 
+        if len(events) <= 1:
+            return
+
         import cupy as cp
         import torch
 
@@ -256,6 +259,18 @@ def do_exec_tasks(
         for method in method_to_elapse:
             method_to_elapse[method] = round(method_to_elapse[method])
 
+        def log_op(
+            method: str, sum: float, percent: float, avg: Optional[float] = None
+        ):
+            if avg is None:
+                logger.warning(
+                    f"{method} sum: {round(1.25 * sum)} us, sum/20: {round(1.25 * sum / 20)} us, percent: {percent}%"
+                )
+            else:
+                logger.warning(
+                    f"{method} sum: {round(1.25 * sum)} us, sum/20: {round(1.25 * sum / 20)} us, avg: {avg} us, percent: {percent}%"
+                )
+
         method_to_percent: Dict[str, float] = {}
         total_us = sum(method_to_elapse.values())
         for method, elapse in method_to_elapse.items():
@@ -263,62 +278,97 @@ def do_exec_tasks(
             avg_us = round(elapse / count)
             percent = round(elapse / total_us * 100, 1)
             method_to_percent[method] = percent
-            logger.warning(
-                f"op.{method} sum: {elapse} us, avg: {avg_us} us, percent: {percent}%"
-            )
+            log_op(f"op.{method}", elapse, percent, avg_us)
 
-        method_to_elapse["comp.backward"] = (
-            method_to_elapse["compute_loss"]
-            + method_to_elapse["backward_loss"]
-            + method_to_elapse["backward"]
-        )
-        method_to_percent["comp.backward"] = round(
-            method_to_percent["compute_loss"]
-            + method_to_percent["backward_loss"]
-            + method_to_percent["backward"],
-            1,
-        )
+        def accumulate(title: str, methods: List[str]):
+            methods = [method for method in methods if method in method_to_elapse]
+            if len(methods) == 0:
+                method_to_elapse[title] = 0
+                method_to_percent[title] = 0
+            else:
+                method_to_elapse[title] = sum(
+                    method_to_elapse[method] for method in methods
+                )
+                method_to_percent[title] = round(
+                    sum(method_to_percent[method] for method in methods), 1
+                )
 
-        method_to_elapse["comp.others"] = (
-            method_to_elapse["update"]
-            + method_to_elapse["get_input"]
-            + method_to_elapse["get_shard"]
-            + method_to_elapse["get_target"]
+        accumulate(
+            "comp.backward",
+            [
+                "compute_loss",
+                "backward_loss",
+                "backward_pre",
+                "backward_intra",
+                "backward_post",
+            ],
         )
-        method_to_percent["comp.others"] = round(
-            method_to_percent["update"]
-            + method_to_percent["get_input"]
-            + method_to_percent["get_shard"]
-            + method_to_percent["get_target"],
-            1,
+        accumulate(
+            "comp.backward.loss",
+            ["compute_loss", "backward_loss"],
         )
-
-        method_to_elapse["comm"] = (
-            method_to_elapse["allgather"] + method_to_elapse["reducescatter"]
+        accumulate(
+            "comp.backward.grad",
+            ["backward_pre", "backward_intra", "backward_post"],
         )
-        method_to_percent["comm"] = round(
-            method_to_percent["allgather"] + method_to_percent["reducescatter"], 1
+        accumulate(
+            "comp.backward.grad.io",
+            ["backward_pre", "backward_post"],
+        )
+        accumulate(
+            "comp.others",
+            ["update", "get_input", "get_shard", "get_target"],
+        )
+        accumulate(
+            "comm",
+            ["allgather", "reducescatter"],
         )
 
         logger.warning("")
-        logger.warning(
-            f"op.comp.forward sum {method_to_elapse['forward']} us, percent: {method_to_percent['forward']}%"
+        log_op("op.comp.fw", method_to_elapse["forward"], method_to_percent["forward"])
+        log_op(
+            "op.comp.bw",
+            method_to_elapse["comp.backward"],
+            method_to_percent["comp.backward"],
         )
-        logger.warning(
-            f"op.comp.backward sum {method_to_elapse['comp.backward']} us, percent: {method_to_percent['comp.backward']}%"
+        log_op(
+            "op.comp.bw.loss",
+            method_to_elapse["comp.backward.loss"],
+            method_to_percent["comp.backward.loss"],
         )
-        logger.warning(
-            f"op.comp.others sum {method_to_elapse['comp.others']} us, percent: {method_to_percent['comp.others']}%"
+        log_op(
+            "op.comp.bw.grad",
+            method_to_elapse["comp.backward.grad"],
+            method_to_percent["comp.backward.grad"],
         )
-        logger.warning(
-            f"op.comm.allgather sum {method_to_elapse['allgather']} us, percent: {method_to_percent['allgather']}%"
+        log_op(
+            "op.comp.bw.grad.comp",
+            method_to_elapse["backward_intra"],
+            method_to_percent["backward_intra"],
         )
-        logger.warning(
-            f"op.comm.reducescatter sum {method_to_elapse['reducescatter']} us, percent: {method_to_percent['reducescatter']}%"
+        log_op(
+            "op.comp.bw.grad.io",
+            method_to_elapse["comp.backward.grad.io"],
+            method_to_percent["comp.backward.grad.io"],
         )
-        logger.warning(
-            f"op.comm sum {method_to_elapse['comm']} us, percent: {method_to_percent['comm']}%"
+        log_op(
+            "op.comp.others",
+            method_to_elapse["comp.others"],
+            method_to_percent["comp.others"],
         )
+        log_op("op.comm", method_to_elapse["comm"], method_to_percent["comm"])
+        if "allgather" in method_to_elapse:
+            log_op(
+                "op.comm.allgather",
+                method_to_elapse["allgather"],
+                method_to_percent["allgather"],
+            )
+        if "reducescatter" in method_to_elapse:
+            log_op(
+                "op.comm.reducescatter",
+                method_to_elapse["reducescatter"],
+                method_to_percent["reducescatter"],
+            )
 
         logger.warning("")
     except Exception:
@@ -848,6 +898,7 @@ class ExecutableTask:
                 raise exc
             else:
                 output_val = _wrap_exception(exc)
+                logger.error(f"exec_operation exception: {output_val}")
 
         # Write the output to the downstream task. Wrap the output in a GPU future
         # if overlapping GPU communication.

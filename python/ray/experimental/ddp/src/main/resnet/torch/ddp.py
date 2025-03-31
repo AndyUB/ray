@@ -33,7 +33,7 @@ def run_torch_ddp(
         ranks_to_elapses = manager.dict()
 
         mp.spawn(
-            spwan_torch_ddp,
+            spawn_torch_ddp,
             args=(world_size, ranks_to_elapses, args),
             nprocs=world_size,
             join=True,
@@ -59,7 +59,7 @@ def run_torch_ddp(
     )
 
 
-def spwan_torch_ddp(
+def spawn_torch_ddp(
     rank: int,
     world_size: int,
     ranks_to_elapses: Dict[int, int],
