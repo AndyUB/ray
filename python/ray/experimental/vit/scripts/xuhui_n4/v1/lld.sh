@@ -35,6 +35,7 @@ log_file=$output_path/actors.log
 
 python src/core/v1.py \
 	--num_iters $num_iters \
+	--num_dp_vision 1 \
 	>$log_file 2>&1
 status=$?
 

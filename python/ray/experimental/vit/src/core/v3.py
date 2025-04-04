@@ -1,6 +1,7 @@
 import logging
 
 import fire
+import os
 from actor import WorkerV3 as Worker
 from dist import init_torch_distributed
 
@@ -14,6 +15,12 @@ logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
 
+# [HACK]
+CUDA_VISIBLE_DEVICES = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = CUDA_VISIBLE_DEVICES
+GPU_IDS = [int(device_id) for device_id in CUDA_VISIBLE_DEVICES.split(",")]
+
+
 def main(
     # model_name: str = "ViT-L-14",
     model_name: str = "ViT-bigG-14",
@@ -25,7 +32,7 @@ def main(
     bs_global = bs_single * num_dp_vision
 
     actors = [Worker.remote(model_name, i, num_dp) for i in range(num_dp)]
-    init_torch_distributed(actors)
+    init_torch_distributed(actors, GPU_IDS)
     ray.get([actor.init_fsdp_model.remote() for actor in actors])
 
     for i in range(num_iters):

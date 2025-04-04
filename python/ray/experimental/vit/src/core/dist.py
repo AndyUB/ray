@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 import ray
 
@@ -19,7 +19,10 @@ class TorchDistributedConfig:
     gpu_ids: List[int]
 
 
-def init_torch_distributed(workers):
+def init_torch_distributed(
+    workers,
+    visible_gpus: Optional[List[int]] = None,  # [HACK]
+):
     """Initialize PyTorch Distributed Process Group for a set of workers."""
     worker_metadata = ray.get([worker.get_metadata.remote() for worker in workers])
 
@@ -46,6 +49,10 @@ def init_torch_distributed(workers):
         for metadata in metadata_list_per_ip:
             visible_device_ids += metadata["gpu_ids"]
 
+        # [HACK]
+        if visible_gpus is not None:
+            visible_device_ids = visible_gpus
+
         for metadata in metadata_list_per_ip:
             if rank == 0:
                 master_addr = metadata["address"]
@@ -61,6 +68,7 @@ def init_torch_distributed(workers):
                 master_port=master_port,
                 gpu_ids=visible_device_ids,
             )
+            print(worker_config)
 
             rank += 1
             local_rank += 1

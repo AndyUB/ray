@@ -1,4 +1,5 @@
 import logging
+import os
 
 import fire
 from actor import TextWorker, VisionWorker
@@ -15,6 +16,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
+
+
+# [HACK]
+CUDA_VISIBLE_DEVICES = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = CUDA_VISIBLE_DEVICES
+GPU_IDS = [int(device_id) for device_id in CUDA_VISIBLE_DEVICES.split(",")]
 
 
 def main(
@@ -42,14 +49,14 @@ def main(
         VisionWorker.remote(model_name, num_dp_vision, num_tp_vision, num_dp_text)
         for _ in range(num_dp_vision * num_tp_vision)
     ]
-    init_torch_distributed(vision_actors)
+    init_torch_distributed(vision_actors, GPU_IDS)
     ray.get([worker.init_fsdp_model.remote() for worker in vision_actors])
 
     text_actors = [
         TextWorker.remote(model_name, num_dp_text, num_tp_text, num_dp_vision)
         for _ in range(num_dp_text * num_tp_text)
     ]
-    init_torch_distributed(text_actors)
+    init_torch_distributed(text_actors, GPU_IDS)
     ray.get([worker.init_fsdp_model.remote() for worker in text_actors])
 
     vision_params = ray.get(vision_actors[0].get_num_params.remote())
