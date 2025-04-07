@@ -28,11 +28,11 @@ export RAY_DEDUP_LOGS=0
 
 output_path=results/xuhui_n4/llama3/torch/cc_on/fp_on/pf_on/exp_self
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
+# rm -f ${output_path}/*.csv
+# rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
-batch_size=2
+batch_size=1
 seq_len=1024
 num_actors=4
 num_iters=20

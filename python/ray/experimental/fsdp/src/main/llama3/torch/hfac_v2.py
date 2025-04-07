@@ -10,7 +10,7 @@ import torch
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from src.core.common import get_timing_event_torch, millis_to_micros
-from src.core.llama3.model import LLAMA_3B as LLAMA
+from src.core.llama3.model import LLAMA_8B as LLAMA
 from src.core.llama3.model import TransformerWrapped
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -160,7 +160,7 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
 
 
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
     args = {
         "batch_size": 1,
         "seq_len": 1024,

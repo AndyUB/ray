@@ -29,8 +29,8 @@ export CUDA_VISIBLE_DEVICES=2,3
 
 output_path=results/xuhui_n2/llama3/torch/cc_on/fp_on/pf_on/exp_self
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
+# rm -f ${output_path}/*.csv
+# rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
 batch_size=1
