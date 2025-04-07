@@ -1,0 +1,83 @@
+#!/bin/bash
+
+if [[ "$(pwd)" != */python/ray/experimental/fsdp ]]; then
+	echo "Please run in the python/ray/experimental/fsdp directory"
+	exit 1
+fi
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+debug=false
+while getopts "d" opt; do
+	case $opt in
+	d) debug=true ;;
+	*)
+		echo "Usage: $0 [-d]" >&2
+		echo "  -d    Enable debug mode"
+		exit 1
+		;;
+	esac
+done
+
+export TZ="America/Los_Angeles"
+timestamp=$(date '+%Y%m%d_%H%M%S')
+
+export RAY_DEDUP_LOGS=0
+# export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=1,3
+
+output_path=results/xuhui_n2/llama3/torch/ds/exp_self
+mkdir -p $output_path
+rm -f ${output_path}/*.csv
+rm -f ${output_path}/*.log
+echo "Running $output_path..."
+
+# batch_size=1
+# seq_len=1024
+# num_iters=20
+# latency_prefix=${timestamp}
+# model_prefix=$output_path/${timestamp}_model
+log_file=$output_path/${timestamp}.log
+
+deepspeed --num_gpus=2 src/main/llama3/torch/ds.py >$log_file 2>&1
+status=$?
+
+if $debug; then
+	code ${output_path}/${timestamp}.log
+fi
+
+if [ $status -ne 0 ]; then
+	echo -e "${RED}ER${NC}"
+	exit 1
+fi
+
+# compare_files() {
+# 	local file1="$1"
+# 	local file2="$2"
+
+# 	if [ ! -f "$file1" ]; then
+# 		echo -e "${RED}Error: File '$file1' does not exist${NC}"
+# 		exit 1
+# 	fi
+# 	if [ ! -f "$file2" ]; then
+# 		echo -e "${RED}Error: File '$file2' does not exist${NC}"
+# 		exit 1
+# 	fi
+
+# 	if ! diff "$file1" "$file2"; then
+# 		echo -e "${RED}ER${NC}"
+# 		if $debug; then
+# 			code "$file1"
+# 			code "$file2"
+# 		fi
+# 		exit 1
+# 	fi
+# }
+
+# file1="${output_path}/${timestamp}_model_0.log"
+# file2="${output_path}/${timestamp}_model_1.log"
+# compare_files "$file1" "$file2"
+
+echo -e "${GREEN}AC${NC}"
