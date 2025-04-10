@@ -133,7 +133,8 @@ class _CollectiveOperation(_NcclOperation):
             world_size = len(self._actor_handles)
             if send_buf.shape[0] % world_size != 0:
                 raise ValueError(
-                    "Expected the first dimension of the input tensor to be divisible "
+                    "Expected the first dimension of the input tensor "
+                    f"(shape={send_buf.shape}) to be divisible "
                     f"by the world size {world_size}"
                 )
             recv_buf = torch.empty(
@@ -154,9 +155,7 @@ class CollectiveOutputNode(ClassMethodNode):
     def __init__(
         self,
         method_name: str,
-        method_args: Tuple[
-            DAGNode,
-        ],
+        method_args: Tuple[DAGNode,],
         method_kwargs: Dict[str, Any],
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],

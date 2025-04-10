@@ -25,17 +25,19 @@ export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
-export CUDA_VISIBLE_DEVICES=2,3
+# export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=0,1,2
+# export CUDA_VISIBLE_DEVICES=0,1
 
-output_path=results/xuhui_n2/llama3/torch/cc_on/fp_on/pf_on/exp_self
+output_path=results/xuhui_n3/llama3/torch/cc_on/fp_on/pf_on/exp_self
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
+# rm -f ${output_path}/*.csv
+# rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
 batch_size=1
 seq_len=1024
-num_actors=2
+num_actors=3
 num_iters=20
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model

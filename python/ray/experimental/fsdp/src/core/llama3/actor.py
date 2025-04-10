@@ -287,7 +287,7 @@ class LlamaActor:
             self.update_tracing("bw.loss.grad.starts")
         loss.backward()
         shard = self.shards[-1]
-        flat_grad = shard.get_flat_grad()
+        flat_grad = shard.get_flat_grad(self.num_actors)
         shard.free_peer_shards()
         if self.tracing:
             self.update_tracing("bw.loss.grad.ends")
@@ -321,7 +321,7 @@ class LlamaActor:
         if self.tracing:
             self.update_tracing("bw.grad.post.starts")
         shard = self.shards[idx]
-        flat_grad = shard.get_flat_grad()
+        flat_grad = shard.get_flat_grad(self.num_actors)
         shard.free_peer_shards()
         if self.tracing:
             self.update_tracing("bw.grad.post.ends")

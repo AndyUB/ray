@@ -592,10 +592,20 @@ class Shard(torch.nn.Module):
     def set_flat_param(self, flat_param: torch.Tensor) -> None:
         _set_flat_param(self.model, flat_param, self.model_metadata)
 
-    def get_flat_grad(self) -> torch.Tensor:
+    def get_flat_grad(self, num_shards: int) -> torch.Tensor:
         flat_grad = parameters_to_vector(
             [param.grad for param in self.model.parameters()]
         )
+        padding = (num_shards - flat_grad.numel() % num_shards) % num_shards
+        if padding > 0:
+            flat_grad = torch.cat(
+                [
+                    flat_grad,
+                    torch.zeros(
+                        padding, dtype=flat_grad.dtype, device=flat_grad.device
+                    ),
+                ]
+            )
         return flat_grad
 
     def free_peer_shards(self) -> None:

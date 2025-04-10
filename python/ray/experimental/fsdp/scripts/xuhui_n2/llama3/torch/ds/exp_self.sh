@@ -26,12 +26,12 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 # export CUDA_VISIBLE_DEVICES=2,3
-export CUDA_VISIBLE_DEVICES=1,3
+# export CUDA_VISIBLE_DEVICES=1,3
 
 output_path=results/xuhui_n2/llama3/torch/ds/exp_self
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
+# rm -f ${output_path}/*.csv
+# rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
 # batch_size=1
@@ -41,7 +41,7 @@ echo "Running $output_path..."
 # model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-deepspeed --num_gpus=2 src/main/llama3/torch/ds.py >$log_file 2>&1
+deepspeed --num_gpus=3 src/main/llama3/torch/ds.py >$log_file 2>&1
 status=$?
 
 if $debug; then

@@ -12,7 +12,12 @@ from deepspeed import comm
 
 from src.core.common import get_timing_event_torch, millis_to_micros
 from src.core.llama3.model import LLAMA_3B as LLAMA
-from src.core.llama3.model import TransformerWrapped
+from src.core.llama3.model import (
+    TransformerWrapped,
+    BucketParameterFirst,
+    BucketParameterTransformerBlock,
+    BucketParameterLast,
+)
 from torch.utils.data import TensorDataset
 
 
@@ -24,7 +29,7 @@ logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
 deepspeed_config_dict = {
-    "train_batch_size": 2,  # Will be overwritten by training loop logic
+    "train_batch_size": 3,  # Will be overwritten by training loop logic
     "train_micro_batch_size_per_gpu": 1,
     "gradient_accumulation_steps": 1,
     "gradient_clipping": 1.0,
@@ -32,9 +37,10 @@ deepspeed_config_dict = {
         "stage": 3,
         "offload_optimizer": {"device": "none"},
         "offload_param": {"device": "none"},
-        "stage3_param_persistence_threshold": 1e5,  # Optional: can help perf
-        "stage3_max_live_parameters": 1e9,
-        "stage3_max_reuse_distance": 1e9,
+        # "stage3_prefetch_bucket_size": 5e6,
+        # "stage3_param_persistence_threshold": 1e5,  # Optional: can help perf
+        # "stage3_max_live_parameters": 1e9,
+        # "stage3_max_reuse_distance": 1e9,
     },
     "bf16": {"enabled": True},
     "fp16": {"enabled": False},  # Explicitly disabled since using bf16
@@ -101,6 +107,10 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
     # Set up the criterion
     criterion = torch.nn.CrossEntropyLoss()
 
+    deepspeed.utils.set_z3_leaf_modules(
+        model,
+        [BucketParameterFirst, BucketParameterTransformerBlock, BucketParameterLast],
+    )
     # Prepare everything with accelerator
     model_engine, optimizer, train_dataloader, scheduler = deepspeed.initialize(
         model=model,
