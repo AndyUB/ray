@@ -25,11 +25,12 @@ export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
+export CUDA_VISIBLE_DEVICES=1,2,3,4
 
 output_path=results/xuhui_n2/llama3/ray/cc_on/ov_on/exp_self
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
+# rm -f ${output_path}/*.csv
+# rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
 batch_size=1

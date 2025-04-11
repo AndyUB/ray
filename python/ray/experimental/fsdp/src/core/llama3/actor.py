@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
@@ -63,8 +64,11 @@ class LlamaActor:
         self.shards = [shard.to(self.device) for shard in shards]
 
     def init_and_set_shard_model(self) -> None:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[{self.rank=}] init_shard[start] {datetime.now()}")
         actor_to_shards = self.init_and_shard_model()
         self.set_shards(actor_to_shards[self.rank])
+        logger.warning(f"[{self.rank=}] init_shard[end] {datetime.now()}")
 
     def init_training(self) -> None:
         torch.manual_seed(self.seed)

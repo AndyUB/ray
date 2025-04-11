@@ -642,6 +642,10 @@ def shard_model(model: torch.nn.Module, num_shards: int) -> List[Shard]:
         param[i : i + sharded_param_size].reshape(-1)
         for i in range(0, param.numel(), sharded_param_size)
     ]
+    # actor (own shard)
+    # flat param size => shard size
+    # random init tensor of shard size +
+    # metadata
     model_metadata = [(param.shape, param.numel()) for param in model.parameters()]
     _free_peer_shards(model)
     shards = [
