@@ -7,7 +7,7 @@ import torch
 
 import ray
 from ..common import millis_to_micros
-from .model import Shard, TransformerBP, shard_model
+from .model import Shard, TransformerBP, TransformerShardedBP, shard_model
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +48,39 @@ class LlamaActor:
 
     def init_and_shard_model(self) -> List[List[Shard]]:
         torch.manual_seed(2025)
+        logger.warning(f"[{self.rank=}] model_init[start] {datetime.now()}")
         model = TransformerBP(self.model_args).to(self.device).half()
+        logger.warning(f"[{self.rank=}] model_init[end] {datetime.now()}")
         bparams = model.bparams
         assert len(bparams) == self.num_partitions
         for bparam in bparams:
             bparam.init_weights()
         actor_to_shards = [[] for _ in range(self.num_actors)]
+        logger.warning(f"[{self.rank=}] model_shard[start] {datetime.now()}")
         for bparam in bparams:
             shards = shard_model(bparam, self.num_actors)
             for rank, shard in enumerate(shards):
                 actor_to_shards[rank].append(shard)
+        logger.warning(f"[{self.rank=}] model_shard[end] {datetime.now()}")
         return actor_to_shards
+
+    def fake_shard_model(self) -> None:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[{self.rank=}] fake_shard[start] {datetime.now()}")
+        torch.manual_seed(2025)
+        logger.warning(f"[{self.rank=}] model_init[start] {datetime.now()}")
+        model = (
+            TransformerShardedBP(self.num_actors, self.model_args)
+            .to(self.device)
+            .half()
+        )
+        logger.warning(f"[{self.rank=}] model_init[end] {datetime.now()}")
+        assert len(model.bparams) == self.num_partitions
+        print(f"num_partitions: {self.num_partitions}")
+        print(model)
+        print([param.data for param in model.parameters()])
+        self.set_shards(model.shards)
+        logger.warning(f"[{self.rank=}] fake_shard[end] {datetime.now()}")
 
     def set_shards(self, shards: List[Shard]) -> None:
         self.shards = [shard.to(self.device) for shard in shards]

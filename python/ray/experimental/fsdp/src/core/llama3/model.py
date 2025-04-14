@@ -471,7 +471,7 @@ class BucketParameter(nn.Module):
         params = [param for _, param in self.named_params]
         self.optimizer = torch.optim.AdamW(params, lr=1e-6)
 
-        self.init_weights()
+        # self.init_weights()
 
     def init_weights(self):
         for _, param in self.named_params:
@@ -654,6 +654,57 @@ def shard_model(model: torch.nn.Module, num_shards: int) -> List[Shard]:
     return shards
 
 
+def shard_for_rank(
+    model: torch.nn.Module,
+    num_shards: int,
+    rank: Optional[int] = None,
+) -> Shard:
+    def get_first_param():
+        for param in model.parameters():
+            return param
+        raise ValueError("Expected parameters")
+
+    first_param = get_first_param()
+    dtype = first_param.dtype
+    device = first_param.device
+    # Metadata
+    model_metadata = [(param.shape, param.numel()) for param in model.parameters()]
+    # Compute shard size
+    flat_param_size = sum(param.numel() for param in model.parameters())
+    padding = (num_shards - flat_param_size % num_shards) % num_shards
+    flat_param_size += padding
+    sharded_param_size = flat_param_size // num_shards
+    # Allocate (and copy) sharded param
+    assert rank is None
+    if rank is None:
+        # sharded_param = torch.randn(sharded_param_size, dtype=dtype, device=device)
+        sharded_param = torch.empty(sharded_param_size, dtype=dtype, device=device)
+    else:
+        sharded_param = torch.empty(sharded_param_size, dtype=dtype, device=device)
+        shard_start = rank * sharded_param_size
+        shard_end = shard_start + sharded_param_size
+        offset = 0
+        for param in model.parameters():
+            param_start = offset
+            numel = param.numel()
+            param_end = offset + numel
+            offset += numel
+            if param_end < shard_start:
+                continue
+            if param_start > shard_end:
+                break
+            param_data_start = max(param_start, shard_start) - param_start
+            param_data_end = min(param_end, shard_end) - param_start
+            shard_data_start = max(param_start, shard_start) - shard_start
+            shard_data_end = min(param_end, shard_end) - shard_start
+            sharded_param[shard_data_start:shard_data_end] = param.data[
+                param_data_start:param_data_end
+            ].reshape(-1)
+    _free_peer_shards(model)
+    shard = Shard(model, sharded_param, model_metadata)
+    return shard
+
+
 def _set_flat_param(
     model: torch.nn.Module,
     flat_param: torch.Tensor,
@@ -748,6 +799,116 @@ class TransformerBP(nn.Module):
             BucketParameter(
                 [self.output], pre_hook=self.pre_output, hook_layers=[self.norm]
             )
+        )
+
+    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
+        start_pos = 0
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
+
+    def pre_output(self, h: torch.Tensor):
+        h = self.norm(h)
+        return h
+
+    def forward(self, tokens: torch.Tensor):
+        # [NOTE] This is used for torch DDP.
+        bp = self.bparams[0]
+        h = bp.forward(tokens)
+        freqs_cis, mask = bp.post_hook(tokens, h)
+
+        for bp in self.bparams[1:-1]:
+            h = bp.forward_transformer(h, 0, freqs_cis, mask)
+
+        bp = self.bparams[-1]
+        h = bp.pre_hook(h)
+        output = bp.forward(h)
+
+        return output
+
+
+class TransformerShardedBP(nn.Module):
+    def __init__(self, num_shards: int, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        self.bparams: List[BucketParameter] = []
+        self.shards: List[Shard] = []
+        # buckets = [
+        #     "VocabParallelEmbedding",
+        #     [
+        #         "Attention",
+        #         "FeedForward",
+        #         "RMSNorm * 2",
+        #     ],
+        #     "ColumnParallelLinear",
+        # ]
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
+        def shard_bp():
+            bp = self.bparams[-1]
+            self.shards.append(shard_for_rank(bp, num_shards))
+
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+        )
+        log_size(self.tok_embeddings)
+        self.bparams.append(
+            BucketParameter([self.tok_embeddings], post_hook=self.post_embeddings)
+        )
+        shard_bp()
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            layer = TransformerBlock(layer_id, params)
+            self.layers.append(layer)
+            if layer_id == 0:
+                log_size(layer)
+            self.bparams.append(BucketParameter([layer]))
+            shard_bp()
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            # init_method=lambda x: x,
+        )
+        log_size(self.output)
+        self.bparams.append(
+            BucketParameter(
+                [self.output], pre_hook=self.pre_output, hook_layers=[self.norm]
+            )
+        )
+        shard_bp()
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
         )
 
     def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):

@@ -28,13 +28,16 @@ export RAY_DEDUP_LOGS=0
 
 output_path=results/barbell/llama3/ray/cc_on/ov_on/exp_self
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
+# rm -f ${output_path}/*.csv
+# rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
 batch_size=1
 seq_len=1024
 num_partitions=18
+# 1B
+# num_partitions=30 # 3B
+# num_partitions=34 # 8B
 num_actors=2
 num_iters=20
 latency_prefix=${timestamp}

@@ -5,7 +5,9 @@ import ray
 from .....core.common import get_end_time, get_start_time, log_elapses_to_csv
 from .....core.config import parse_args
 from .....core.llama3.actor import LlamaActor
-from .....core.llama3.model import LLAMA_8B as LLAMA
+
+# from .....core.llama3.model import LLAMA_DEBUG as LLAMA
+from .....core.llama3.model import LLAMA_1B as LLAMA
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allgather, reducescatter
 
@@ -127,7 +129,8 @@ def train(
         dag = MultiOutputNode(updates)
 
     compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
-    ray.get([actor.init_and_set_shard_model.remote() for actor in actors])
+    # ray.get([actor.init_and_set_shard_model.remote() for actor in actors])
+    ray.get([actor.fake_shard_model.remote() for actor in actors])
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
