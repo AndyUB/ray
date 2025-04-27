@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+from torch.profiler import profile, ProfilerActivity
 
 import ray
 from ..common import millis_to_micros
@@ -44,6 +45,27 @@ class LlamaActor:
         self.it = 0
         self.events: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
+
+        self.profiler = profile(
+            activities=[
+                ProfilerActivity.CPU,
+                ProfilerActivity.CUDA,
+            ],
+            record_shapes=True,
+            with_stack=True,
+        )
+        self.profiler.__enter__()
+
+    def finish_profiling(self) -> None:
+        self.profiler.__exit__(None, None, None)
+        print("Exporting profile")
+        self.profiler.export_chrome_trace(
+            f"llama3_rank{self.rank}_"
+            f"of{self.num_actors}_"
+            f"batch{self.batch_size}_"
+            f"seqlen{self.seq_len}_"
+            f"partition{self.num_partitions}.json"
+        )
 
     def init_and_shard_model(self) -> List[List[Shard]]:
         torch.manual_seed(2025)
@@ -232,6 +254,7 @@ class LlamaActor:
             ]
 
     def fetch_traces(self) -> Dict[str, List[float]]:
+        self.finish_profiling()
         return self.elapses
 
     def get_input(self, _) -> torch.Tensor:
