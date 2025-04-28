@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/llama3/torch/cc_on/fp_on/pf_on/exp_self
+output_path=results/barbell/llama3/torch/cc_on/fp_on/pf_on/exp_self/$timestamp
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log

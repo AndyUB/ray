@@ -11,6 +11,7 @@ import torch.multiprocessing as mp
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import BackwardPrefetch
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+from torch.profiler import profile, ProfilerActivity
 
 from ......core.common import (
     get_timing_event_torch,
@@ -109,25 +110,30 @@ def spawn_torch_fsdp(
 
         model_args = LLAMA_1B if model == "LLAMA_1B" else LLAMA_8B
         logger.info(f"model_args: {model_args}")
-        model = TransformerWrapped(model_args).to("cuda").half()
-        size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-        logger.warning(f"Model size: {size_bytes / 1024 / 1024} MiB")
 
-        fsdp_model = FSDP(
-            model,
-            auto_wrap_policy=functools.partial(
-                lambda_auto_wrap_policy,
-                lambda_fn=lambda p: isinstance(p, BucketParameterBase),
-            ),
-            device_id=device,
-            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-            forward_prefetch=True,
-        )
+        with profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True,
+            with_stack=True,
+        ) as prof:
+            model = TransformerWrapped(model_args).to("cuda").half()
+            size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+            logger.warning(f"Model size: {size_bytes / 1024 / 1024} MiB")
+            fsdp_model = FSDP(
+                model,
+                auto_wrap_policy=functools.partial(
+                    lambda_auto_wrap_policy,
+                    lambda_fn=lambda p: isinstance(p, BucketParameterBase),
+                ),
+                device_id=device,
+                backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+                forward_prefetch=True,
+            )
+            optimizer = torch.optim.AdamW(fsdp_model.parameters(), lr=1e-6)
+        prof.export_chrome_trace(f"torch_llama3_rank{rank}_of{world_size}.json")
+        criterion = torch.nn.CrossEntropyLoss()
         if rank == 0:
             logger.info(f"FSDP model: {fsdp_model}")
-
-        criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.AdamW(fsdp_model.parameters(), lr=1e-6)
         elapses = defaultdict(list)
 
         for iter in range(num_iters):
