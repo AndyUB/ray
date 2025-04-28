@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui_n2/llama3/ray/cc_on/ov_on/exp_self
+output_path=results/xuhui_n2/llama3/ray/cc_on/ov_on/exp_self/$timestamp
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
@@ -46,13 +46,11 @@ log_file=$output_path/${timestamp}.log
 python -m ray.experimental.fsdp.src.main.llama3.ray.cc_on.ov_on \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
-	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
-	--model-prefix $model_prefix \
-	--tracing \
+	--model "LLAMA_8B" \
 	>$log_file 2>&1
 # --save-model \
 status=$?
