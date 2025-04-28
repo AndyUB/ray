@@ -241,6 +241,8 @@ def do_exec_tasks(
         if RAY_CGRAPH_ENABLE_NVTX_PROFILING:
             nvtx_profile.disable()
 
+        return
+
         if len(events) <= 1:
             return
 
@@ -833,6 +835,7 @@ class ExecutableTask:
         import cupy as cp
 
         def get_timing_event_cp() -> cp.cuda.Event:
+            return None
             ev = cp.cuda.Event()
             ev.record()
             return ev
@@ -840,6 +843,8 @@ class ExecutableTask:
         input_values = []
         input_exc = None
         output_val = None
+        start = None
+        end = None
 
         # Resolve input values and handle exceptions. There could be exceptions from
         # upstream tasks.
