@@ -1,4 +1,5 @@
 import logging
+import time
 from types import ModuleType
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
@@ -87,7 +88,11 @@ class _NcclGroup(Communicator):
             from ray.util.collective.collective_group import nccl_util
 
             self.nccl_util = nccl_util
+            init_comm_start = time.perf_counter()
             self._comm = self.nccl_util.NcclCommunicator(world_size, comm_id, rank)
+            init_comm_end = time.perf_counter()
+            init_comm_elapse = (init_comm_end - init_comm_start) * 1e6
+            print(f"<rank{rank}>[init_comm] {init_comm_elapse:.2f} us")
         else:
             # Driver does not have a rank.
             self._comm = None
@@ -102,6 +107,7 @@ class _NcclGroup(Communicator):
             # TODO(swang): Allow default device to be overridden.
             device = torch_utils.get_devices()[0]
 
+            stream_start = time.perf_counter()
             if use_communication_streams:
                 import torch
 
@@ -119,6 +125,9 @@ class _NcclGroup(Communicator):
                 self._send_stream = stream
                 self._recv_stream = stream
                 self._coll_stream = stream
+            stream_end = time.perf_counter()
+            stream_elapse = (stream_end - stream_start) * 1e6
+            print(f"<rank{rank}>[init_stream] {stream_elapse:.2f} us")
 
         self._closed = False
 

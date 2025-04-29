@@ -642,6 +642,9 @@ def _do_init_communicator(
     use_communication_streams,
     custom_communicator: Optional[Communicator] = None,
 ):
+    import time
+
+    start = time.perf_counter()
     import torch
 
     if not custom_communicator:
@@ -663,6 +666,10 @@ def _do_init_communicator(
             torch.cuda.current_stream().cuda_stream,
             use_communication_streams,
         )
+
+    end = time.perf_counter()
+    elapse = (end - start) * 1e6
+    print(f"<rank{rank}>[init] {elapse:.2f} us")
 
 
 def _do_destroy_communicator(self, group_id):
