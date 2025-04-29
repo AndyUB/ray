@@ -1,9 +1,11 @@
 import fire
+import os
 import time
 import torch
 import ray
 from ray.dag import InputNode
 from ray.experimental.channel.communicator import Communicator
+from ray.air._internal import torch_utils
 
 from typing import Any, List, Tuple, Union
 
@@ -11,15 +13,19 @@ from typing import Any, List, Tuple, Union
 @ray.remote(num_gpus=1)
 class P2PActor:
     def __init__(self):
-        self.data = torch.zeros(10)
+        self.device = torch_utils.get_devices()[0]
+        self.data = torch.zeros(10, device=self.device)
 
     def get_tensor(self, _dependency: Any) -> torch.Tensor:
         return self.data
 
     def recv_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        assert tensor.device == self.device
         return tensor
 
     def init_distributed(self, world_size, rank):
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "12355"
         torch.distributed.init_process_group(
             backend="nccl", world_size=world_size, rank=rank
         )
