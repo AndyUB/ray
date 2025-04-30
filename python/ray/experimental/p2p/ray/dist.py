@@ -111,6 +111,7 @@ class TorchDistCommunicator(Communicator):
 
 def run_ray_p2p_with_torch_dist(
     num_iters: int = 1,
+    cpu_tensor: bool = False,
 ) -> None:
     ray.init()
 
@@ -122,7 +123,8 @@ def run_ray_p2p_with_torch_dist(
         sender.init_distributed.remote(world_size, 0),
         receiver.init_distributed.remote(world_size, 1),
     ]
-    ray.wait(refs)
+    ray.get(refs)
+    print("[inited]")
     init_dist_end = time.perf_counter()
 
     def log_elapse(start: float, end: float, event_name: str) -> str:
@@ -137,6 +139,8 @@ def run_ray_p2p_with_torch_dist(
         actors=(sender, receiver),
         transport=nccl_group,
         init_ray=False,
+        timeout=100,
+        cpu_tensor=bool(cpu_tensor),
     )
 
     ray.shutdown()
