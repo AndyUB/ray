@@ -781,10 +781,15 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
     compiled_dag.teardown()
 
 
+# [TODO:andy]
+# Ideas for test cases:
+# 1. An all-reduce operation can hang if not all devices in a communicator
+# participates. Test to check all-reduce does not hang or an error is detected
+# when it hangs.
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regular):
     """
-    Test a dag containing all-reduce errors when user tries to
+    Test error is thrown when user tries to
     all-reduce tensors of different shapes.
     """
     if not USE_GPU:
@@ -842,11 +847,54 @@ def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regul
     compiled_dag.teardown()
 
 
-# [TODO:andy]
-# Ideas for test cases:
-# 1. An all-reduce operation can hang if not all devices in a communicator
-# participates. Test to check all-reduce does not hang or an error is detected
-# when it hangs.
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_custom_communicator(ray_start_regular):
+    """
+    Test all-reduce works with a custom communicator.
+    """
+    raise NotImplementedError
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_membership_mismatch(ray_start_regular):
+    """
+    Test an error is thrown when the communicator (either NcclGroup or custom)
+    has different actors from the input DAG nodes.
+    """
+    raise NotImplementedError
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_op_schedule(ray_start_regular):
+    """
+    Test the READ, COMPUTE, WRITE operations of all-reduce do not cause deadlocks.
+    """
+    raise NotImplementedError
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_different_actors(ray_start_regular):
+    """
+    Test when inputs/outputs are on same/different actors, all-reduce still works.
+    """
+    raise NotImplementedError
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_diff_reduce_ops(ray_start_regular):
+    """
+    Test all-reduce works for all available ReduceOps.
+    """
+    raise NotImplementedError
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
+    """
+    Test error is thrown when an input node is not resolved to a tensor.
+    """
+    raise NotImplementedError
+
 
 if __name__ == "__main__":
     if os.environ.get("PARALLEL_CI"):
