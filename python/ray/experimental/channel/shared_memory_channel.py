@@ -442,6 +442,7 @@ class Channel(ChannelInterface):
         # -1 means no timeout (block indefinitely)
         timeout_ms = int(timeout * 1000) if timeout is not None else -1
 
+        # [TODO] Disallow passing GPUFuture to other actors (for collective ops).
         if isinstance(value, GPUFuture):
             logger.warning(
                 "Blocking the CPU to resolve a GPU future when sending across actors "
@@ -452,6 +453,7 @@ class Channel(ChannelInterface):
 
         if not isinstance(value, SerializedObject):
             try:
+                # [TODO] Check nsight profile to see which stream serialization uses
                 serialized_value = self._worker.get_serialization_context().serialize(
                     value
                 )
