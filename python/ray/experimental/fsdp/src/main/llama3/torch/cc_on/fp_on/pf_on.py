@@ -20,6 +20,7 @@ from ......core.common import (
 from ......core.llama3.model import (
     LLAMA_1B,
     LLAMA_8B,
+    LLAMA_70B,
     BucketParameterBase,
     TransformerWrapped,
 )
@@ -107,11 +108,17 @@ def spawn_torch_fsdp(
         torch.cuda.set_device(rank)
         torch.manual_seed(998244353)
 
-        model_args = LLAMA_1B if model == "LLAMA_1B" else LLAMA_8B
+        model_name_to_args = {
+            "LLAMA_1B": LLAMA_1B,
+            "LLAMA_8B": LLAMA_8B,
+            "LLAMA_70B": LLAMA_70B,
+        }
+        model_args = model_name_to_args[model]
         logger.info(f"model_args: {model_args}")
         model = TransformerWrapped(model_args).to("cuda").half()
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
         logger.warning(f"Model size: {size_bytes / 1024 / 1024} MiB")
+        logger.warning(f"{rank=} here")
 
         fsdp_model = FSDP(
             model,

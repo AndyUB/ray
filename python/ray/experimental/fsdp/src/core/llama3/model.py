@@ -650,6 +650,23 @@ def shard_model(model: torch.nn.Module, num_shards: int) -> List[Shard]:
     return shards
 
 
+def shard_for_rank(model: torch.nn.Module, num_shards: int, rank: int) -> Shard:
+    def get_first_param():
+        for param in model.parameters():
+            return param
+        raise ValueError("Expected parameters")
+
+    first_param = get_first_param()
+    dtype = first_param.dtype
+    device = first_param.device
+    model_metadata = [(param.shape, param.numel()) for param in model.parameters()]
+    flat_param_size = sum(param.numel() for param in model.parameters())
+    padding = (num_shards - flat_param_size % num_shards) % num_shards
+    flat_param_size += padding
+    sharded_param_size = flat_param_size // num_shards
+    sharded_param = torch.empty()
+
+
 def _set_flat_param(
     model: torch.nn.Module,
     flat_param: torch.Tensor,
