@@ -1,0 +1,169 @@
+(ray-pip-clone) ➜  debug-0508 python -m communicator.actor.p2p.compiled.cupy.example --name p2p_bench
+[INFO example.py:47 run_p2p] Running with CUDA devices 0,1...
+2025-05-09 06:04:44,182 INFO worker.py:1888 -- Started a local Ray instance.
+2025-05-09 06:04:50,667 INFO torch_tensor_nccl_channel.py:772 -- Creating NCCL group d47a521a-0335-4e83-80fe-75581bfc3e14 on actors: [Actor(Actor, 006a72a72f9bbf437214245501000000), Actor(Actor, b587ceb802cd14e1324fa0d601000000)]
+2025-05-09 06:04:57,657 INFO torch_tensor_nccl_channel.py:797 -- NCCL group initialized.
+Traceback (most recent call last):
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 2531, in _execute_until
+    result = self._dag_output_fetcher.read(timeout)
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/common.py", line 309, in read
+    outputs = self._read_list(timeout)
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/common.py", line 400, in _read_list
+    raise e
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/common.py", line 382, in _read_list
+    result = c.read(min(remaining_timeout, iteration_timeout))
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/shared_memory_channel.py", line 776, in read
+    return self._channel_dict[self._resolve_actor_id()].read(timeout)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/shared_memory_channel.py", line 612, in read
+    output = self._buffers[self._next_read_index].read(timeout)
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/shared_memory_channel.py", line 480, in read
+    ret = self._worker.get_objects(
+          ~~~~~~~~~~~~~~~~~~~~~~~~^
+        [self._local_reader_ref], timeout=timeout, return_exceptions=True
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )[0][0]
+    ^
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/_private/worker.py", line 904, in get_objects
+    ] = self.core_worker.get_objects(
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        object_refs,
+        ^^^^^^^^^^^^
+        timeout_ms,
+        ^^^^^^^^^^^
+    )
+    ^
+  File "python/ray/_raylet.pyx", line 3197, in ray._raylet.CoreWorker.get_objects
+  File "python/ray/includes/common.pxi", line 106, in ray._raylet.check_status
+ray.exceptions.RayChannelTimeoutError: System error: Timed out waiting for object available to read. ObjectID: 00b133a11e1c461cb587ceb802cd14e1324fa0d60100000002e1f505
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 82, in <module>
+    fire.Fire(main)
+    ~~~~~~~~~^^^^^^
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/fire/core.py", line 135, in Fire
+    component_trace = _Fire(component, args, parsed_flag_args, context, name)
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/fire/core.py", line 468, in _Fire
+    component, remaining_args = _CallAndUpdateTrace(
+                                ~~~~~~~~~~~~~~~~~~~^
+        component,
+        ^^^^^^^^^^
+    ...<2 lines>...
+        treatment='class' if is_class else 'routine',
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        target=component.__name__)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+    component = fn(*varargs, **kwargs)
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 76, in main
+    run_p2p_bench()
+    ~~~~~~~~~~~~~^^
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 69, in run_p2p_bench
+    run_p2p(devices)
+    ~~~~~~~^^^^^^^^^
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 61, in run_p2p
+    ray.get(compiled_dag.execute(None), timeout=120)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/_private/auto_init_hook.py", line 21, in auto_init_wrapper
+    return fn(*args, **kwargs)
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/_private/client_mode_hook.py", line 103, in wrapper
+    return func(*args, **kwargs)
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/_private/worker.py", line 2794, in get
+    return object_refs.get(timeout=timeout)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/compiled_dag_ref.py", line 115, in get
+    self._dag._execute_until(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._execution_index, self._channel_index, timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 2541, in _execute_until
+    raise RayChannelTimeoutError(
+    ...<4 lines>...
+    ) from e
+ray.exceptions.RayChannelTimeoutError: System error: If the execution is expected to take a long time, increase RAY_CGRAPH_get_timeout which is currently 10 seconds. Otherwise, this may indicate that the execution is hanging.
+2025-05-09 06:06:57,806 INFO compiled_dag_node.py:2173 -- Tearing down compiled DAG
+2025-05-09 06:06:57,807 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, b587ceb802cd14e1324fa0d601000000)
+2025-05-09 06:06:57,807 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 006a72a72f9bbf437214245501000000)
+(Actor pid=1799897) Destructing NCCL group on actor: Actor(Actor, 006a72a72f9bbf437214245501000000)
+(Actor pid=1799926) Destructing NCCL group on actor: Actor(Actor, b587ceb802cd14e1324fa0d601000000)
+(Actor pid=1799926) ERROR:root:Compiled DAG task exited with exception
+(Actor pid=1799926) Traceback (most recent call last):
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 253, in do_exec_tasks
+(Actor pid=1799926)     done = tasks[operation.exec_task_idx].exec_operation(
+(Actor pid=1799926)         self, operation.type, overlap_gpu_communication
+(Actor pid=1799926)     )
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 786, in exec_operation
+(Actor pid=1799926)     return self._write()
+(Actor pid=1799926)            ~~~~~~~~~~~^^
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 751, in _write
+(Actor pid=1799926)     self.output_writer.write(output_val)
+(Actor pid=1799926)     ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/common.py", line 617, in write
+(Actor pid=1799926)     channel.write(val_i, timeout)
+(Actor pid=1799926)     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/torch_tensor_nccl_channel.py", line 270, in write
+(Actor pid=1799926)     self._send_cpu_and_gpu_data(value, timeout)
+(Actor pid=1799926)     ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/torch_tensor_nccl_channel.py", line 203, in _send_cpu_and_gpu_data
+(Actor pid=1799926)     self._gpu_data_channel.write(gpu_tensors)
+(Actor pid=1799926)     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/torch_tensor_nccl_channel.py", line 573, in write
+(Actor pid=1799926)     self._nccl_group.send(tensor, rank)
+(Actor pid=1799926)     ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+(Actor pid=1799926)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/nccl_group.py", line 187, in send
+(Actor pid=1799926)     self._comm.send(
+(Actor pid=1799926)     ~~~~~~~~~~~~~~~^
+(Actor pid=1799926)         self.nccl_util.get_tensor_ptr(buf),
+(Actor pid=1799926)         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Actor pid=1799926)     ...<3 lines>...
+(Actor pid=1799926)         self._send_stream.ptr,
+(Actor pid=1799926)         ^^^^^^^^^^^^^^^^^^^^^^
+(Actor pid=1799926)     )
+(Actor pid=1799926)     ^
+(Actor pid=1799926)   File "cupy_backends/cuda/libs/nccl.pyx", line 472, in cupy_backends.cuda.libs.nccl.NcclCommunicator.send
+(Actor pid=1799926)   File "cupy_backends/cuda/libs/nccl.pyx", line 129, in cupy_backends.cuda.libs.nccl.check_status
+(Actor pid=1799926) cupy_backends.cuda.libs.nccl.NcclError: NCCL_ERROR_INTERNAL_ERROR: internal error - please report this issue to the NCCL developers
+(Actor pid=1799897) ERROR:root:Compiled DAG task exited with exception
+(Actor pid=1799897) Traceback (most recent call last):
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 253, in do_exec_tasks
+(Actor pid=1799897)     done = tasks[operation.exec_task_idx].exec_operation(
+(Actor pid=1799897)         self, operation.type, overlap_gpu_communication
+(Actor pid=1799897)     )
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 780, in exec_operation
+(Actor pid=1799897)     return self._read(overlap_gpu_communication)
+(Actor pid=1799897)            ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/dag/compiled_dag_node.py", line 672, in _read
+(Actor pid=1799897)     input_data = self.input_reader.read()
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/common.py", line 309, in read
+(Actor pid=1799897)     outputs = self._read_list(timeout)
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/common.py", line 382, in _read_list
+(Actor pid=1799897)     result = c.read(min(remaining_timeout, iteration_timeout))
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/torch_tensor_nccl_channel.py", line 328, in read
+(Actor pid=1799897)     tensors = self._gpu_data_channel.read(timeout)
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/torch_tensor_nccl_channel.py", line 618, in read
+(Actor pid=1799897)     buf = self._nccl_group.recv(
+(Actor pid=1799897)         meta.shape, meta.dtype, self._writer_rank, _torch_zeros_allocator
+(Actor pid=1799897)     )
+(Actor pid=1799897)   File "/home/wxdeng/miniconda3/envs/ray-pip-clone/lib/python3.13/site-packages/ray/experimental/channel/nccl_group.py", line 234, in recv
+(Actor pid=1799897)     self._comm.recv(
+(Actor pid=1799897)     ~~~~~~~~~~~~~~~^
+(Actor pid=1799897)         self.nccl_util.get_tensor_ptr(buf),
+(Actor pid=1799897)         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Actor pid=1799897)     ...<3 lines>...
+(Actor pid=1799897)         self._recv_stream.ptr,
+(Actor pid=1799897)         ^^^^^^^^^^^^^^^^^^^^^^
+(Actor pid=1799897)     )
+(Actor pid=1799897)     ^
+(Actor pid=1799897)   File "cupy_backends/cuda/libs/nccl.pyx", line 481, in cupy_backends.cuda.libs.nccl.NcclCommunicator.recv
+(Actor pid=1799897)   File "cupy_backends/cuda/libs/nccl.pyx", line 129, in cupy_backends.cuda.libs.nccl.check_status
+(Actor pid=1799897) cupy_backends.cuda.libs.nccl.NcclError: NCCL_ERROR_SYSTEM_ERROR: unhandled system error (run with NCCL_DEBUG=INFO for details)
+2025-05-09 06:07:00,827 INFO compiled_dag_node.py:2200 -- Waiting for worker tasks to exit
+2025-05-09 06:07:00,828 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, b587ceb802cd14e1324fa0d601000000)
+2025-05-09 06:07:00,828 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 006a72a72f9bbf437214245501000000)
+2025-05-09 06:07:00,828 INFO compiled_dag_node.py:2203 -- Teardown complete

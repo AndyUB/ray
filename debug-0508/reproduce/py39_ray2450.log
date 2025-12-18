@@ -1,0 +1,102 @@
+RAY_CGRAPH_get_timeout=600 python -m communicator.actor.p2p.compiled.cupy.example --name p2p_bench
+[INFO example.py:49 run_p2p] Running with CUDA devices 0,1...
+2025-05-10 06:27:34,493 INFO worker.py:1879 -- Started a local Ray instance. View the dashboard at 127.0.0.1:8265 
+2025-05-10 06:27:41,353 INFO torch_tensor_nccl_channel.py:772 -- Creating NCCL group 674a6b6d-be5a-42f6-999a-9759fa92fa32 on actors: [Actor(Actor, 58a03f6a885e3fc198b845c701000000), Actor(Actor, 7c1937bc6cf6585a241ec2d801000000)]
+2025-05-10 06:28:11,357 WARNING torch_tensor_nccl_channel.py:792 -- NCCL group creation not done after 30s. NCCL group creation may be hung.
+2025-05-10 06:28:11,828 INFO torch_tensor_nccl_channel.py:797 -- NCCL group initialized.
+2025-05-10 06:28:11,945 INFO compiled_dag_node.py:2173 -- Tearing down compiled DAG
+2025-05-10 06:28:11,945 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 58a03f6a885e3fc198b845c701000000)
+2025-05-10 06:28:11,945 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 7c1937bc6cf6585a241ec2d801000000)
+(Actor pid=3083008) Destructing NCCL group on actor: Actor(Actor, 7c1937bc6cf6585a241ec2d801000000)
+(Actor pid=3083251) Destructing NCCL group on actor: Actor(Actor, 58a03f6a885e3fc198b845c701000000)
+2025-05-10 06:28:13,227 INFO compiled_dag_node.py:2200 -- Waiting for worker tasks to exit
+2025-05-10 06:28:13,227 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 58a03f6a885e3fc198b845c701000000)
+2025-05-10 06:28:13,227 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 7c1937bc6cf6585a241ec2d801000000)
+2025-05-10 06:28:13,228 INFO compiled_dag_node.py:2203 -- Teardown complete
+[INFO example.py:49 run_p2p] Running with CUDA devices 1,2...
+2025-05-10 06:28:18,999 INFO worker.py:1879 -- Started a local Ray instance. View the dashboard at 127.0.0.1:8265 
+2025-05-10 06:28:25,647 INFO torch_tensor_nccl_channel.py:772 -- Creating NCCL group 5d2dd1c7-bc2e-4029-ac78-1aa9b5eafdcf on actors: [Actor(Actor, 6400e944c7e33bac1da4d29d01000000), Actor(Actor, 0f3aac30f7d987dda3f3442801000000)]
+2025-05-10 06:28:32,073 INFO torch_tensor_nccl_channel.py:797 -- NCCL group initialized.
+2025-05-10 06:28:32,168 INFO compiled_dag_node.py:2173 -- Tearing down compiled DAG
+2025-05-10 06:28:32,169 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 6400e944c7e33bac1da4d29d01000000)
+2025-05-10 06:28:32,169 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 0f3aac30f7d987dda3f3442801000000)
+(Actor pid=3123130) Destructing NCCL group on actor: Actor(Actor, 0f3aac30f7d987dda3f3442801000000)
+(Actor pid=3123147) Destructing NCCL group on actor: Actor(Actor, 6400e944c7e33bac1da4d29d01000000)
+2025-05-10 06:28:33,293 INFO compiled_dag_node.py:2200 -- Waiting for worker tasks to exit
+2025-05-10 06:28:33,293 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 6400e944c7e33bac1da4d29d01000000)
+2025-05-10 06:28:33,293 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 0f3aac30f7d987dda3f3442801000000)
+2025-05-10 06:28:33,293 INFO compiled_dag_node.py:2203 -- Teardown complete
+[INFO example.py:49 run_p2p] Running with CUDA devices 2,3...
+2025-05-10 06:28:39,784 INFO worker.py:1879 -- Started a local Ray instance. View the dashboard at 127.0.0.1:8265 
+2025-05-10 06:28:47,357 INFO torch_tensor_nccl_channel.py:772 -- Creating NCCL group a0712fb9-63f7-45c1-b972-55ddf6227f02 on actors: [Actor(Actor, a74f6f07b35020f134c367c201000000), Actor(Actor, 3ba4e5603faf289deb42e54501000000)]
+2025-05-10 06:29:12,461 INFO torch_tensor_nccl_channel.py:797 -- NCCL group initialized.
+2025-05-10 06:29:12,582 INFO compiled_dag_node.py:2173 -- Tearing down compiled DAG
+2025-05-10 06:29:12,582 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 3ba4e5603faf289deb42e54501000000)
+2025-05-10 06:29:12,582 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, a74f6f07b35020f134c367c201000000)
+(Actor pid=3162214) Destructing NCCL group on actor: Actor(Actor, 3ba4e5603faf289deb42e54501000000)
+(Actor pid=3162232) Destructing NCCL group on actor: Actor(Actor, a74f6f07b35020f134c367c201000000)
+2025-05-10 06:29:14,385 INFO compiled_dag_node.py:2200 -- Waiting for worker tasks to exit
+2025-05-10 06:29:14,386 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 3ba4e5603faf289deb42e54501000000)
+2025-05-10 06:29:14,386 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, a74f6f07b35020f134c367c201000000)
+2025-05-10 06:29:14,386 INFO compiled_dag_node.py:2203 -- Teardown complete
+[INFO example.py:49 run_p2p] Running with CUDA devices 3,4...
+2025-05-10 06:29:20,746 INFO worker.py:1879 -- Started a local Ray instance. View the dashboard at 127.0.0.1:8265 
+2025-05-10 06:29:27,686 INFO torch_tensor_nccl_channel.py:772 -- Creating NCCL group 5f85d26c-b301-4f61-a3c4-78c4809fac60 on actors: [Actor(Actor, 3d6c7faac954c8ff5dc1f04a01000000), Actor(Actor, 7b427cda9a7250d55302eb3401000000)]
+2025-05-10 06:29:57,689 WARNING torch_tensor_nccl_channel.py:792 -- NCCL group creation not done after 30s. NCCL group creation may be hung.
+2025-05-10 06:30:41,672 INFO torch_tensor_nccl_channel.py:797 -- NCCL group initialized.
+2025-05-10 06:30:41,799 INFO compiled_dag_node.py:2173 -- Tearing down compiled DAG
+2025-05-10 06:30:41,799 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 7b427cda9a7250d55302eb3401000000)
+2025-05-10 06:30:41,799 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 3d6c7faac954c8ff5dc1f04a01000000)
+(Actor pid=3203703) Destructing NCCL group on actor: Actor(Actor, 7b427cda9a7250d55302eb3401000000)
+(Actor pid=3203701) Destructing NCCL group on actor: Actor(Actor, 3d6c7faac954c8ff5dc1f04a01000000)
+2025-05-10 06:30:43,502 INFO compiled_dag_node.py:2200 -- Waiting for worker tasks to exit
+2025-05-10 06:30:43,502 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 7b427cda9a7250d55302eb3401000000)
+2025-05-10 06:30:43,503 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 3d6c7faac954c8ff5dc1f04a01000000)
+2025-05-10 06:30:43,503 INFO compiled_dag_node.py:2203 -- Teardown complete
+[INFO example.py:49 run_p2p] Running with CUDA devices 4,5...
+2025-05-10 06:30:49,365 INFO worker.py:1879 -- Started a local Ray instance. View the dashboard at 127.0.0.1:8265 
+2025-05-10 06:30:55,853 INFO torch_tensor_nccl_channel.py:772 -- Creating NCCL group 703ee597-0ca7-4c3d-ba65-8ef0566db163 on actors: [Actor(Actor, 5870e77627ac66badb0a4fc101000000), Actor(Actor, e31062ca5d56fd3a5efedf0f01000000)]
+2025-05-10 06:31:25,857 WARNING torch_tensor_nccl_channel.py:792 -- NCCL group creation not done after 30s. NCCL group creation may be hung.
+2025-05-10 06:33:01,498 INFO torch_tensor_nccl_channel.py:797 -- NCCL group initialized.
+2025-05-10 06:33:01,618 INFO compiled_dag_node.py:2173 -- Tearing down compiled DAG
+2025-05-10 06:33:01,618 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, 5870e77627ac66badb0a4fc101000000)
+2025-05-10 06:33:01,618 INFO compiled_dag_node.py:2178 -- Cancelling compiled worker on actor: Actor(Actor, e31062ca5d56fd3a5efedf0f01000000)
+(Actor pid=3254112) Destructing NCCL group on actor: Actor(Actor, 5870e77627ac66badb0a4fc101000000)
+(Actor pid=3254137) Destructing NCCL group on actor: Actor(Actor, e31062ca5d56fd3a5efedf0f01000000)
+2025-05-10 06:33:05,063 INFO compiled_dag_node.py:2200 -- Waiting for worker tasks to exit
+2025-05-10 06:33:05,064 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, 5870e77627ac66badb0a4fc101000000)
+2025-05-10 06:33:05,064 INFO compiled_dag_node.py:2161 -- Killing actor: Actor(Actor, e31062ca5d56fd3a5efedf0f01000000)
+2025-05-10 06:33:05,064 INFO compiled_dag_node.py:2203 -- Teardown complete
+[INFO example.py:49 run_p2p] Running with CUDA devices 5,6...
+^CTraceback (most recent call last):
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 84, in <module>
+    fire.Fire(main)
+  File "/home/wxdeng/.local/lib/python3.9/site-packages/fire/core.py", line 135, in Fire
+    component_trace = _Fire(component, args, parsed_flag_args, context, name)
+  File "/home/wxdeng/.local/lib/python3.9/site-packages/fire/core.py", line 468, in _Fire
+    component, remaining_args = _CallAndUpdateTrace(
+  File "/home/wxdeng/.local/lib/python3.9/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+    component = fn(*varargs, **kwargs)
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 78, in main
+    run_p2p_bench()
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 71, in run_p2p_bench
+    run_p2p(devices)
+  File "/home/wxdeng/andyub/debug-0508/communicator/actor/p2p/compiled/cupy/example.py", line 51, in run_p2p
+    ray.init()
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/site-packages/ray/_private/client_mode_hook.py", line 103, in wrapper
+    return func(*args, **kwargs)
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/site-packages/ray/_private/worker.py", line 1780, in init
+    _global_node = ray._private.node.Node(
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/site-packages/ray/_private/node.py", line 362, in __init__
+    self.start_head_processes()
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/site-packages/ray/_private/node.py", line 1461, in start_head_processes
+    self.start_api_server(
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/site-packages/ray/_private/node.py", line 1173, in start_api_server
+    self._webui_url, process_info = ray._private.services.start_api_server(
+  File "/home/wxdeng/miniconda3/envs/ray-pip-py39/lib/python3.9/site-packages/ray/_private/services.py", line 1353, in start_api_server
+    time.sleep(0.1)
+KeyboardInterrupt
