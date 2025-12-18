@@ -1,0 +1,7 @@
+cupy-cuda12x; sys_platform != 'darwin'
+fire
+numpy
+pandas
+pyarrow
+ray==2.46.0
+torch
